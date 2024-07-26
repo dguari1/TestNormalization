@@ -3,6 +3,8 @@ import json
 import numpy as np
 import math
 import scipy.interpolate as interpolate
+from scipy.ndimage import median_filter
+
 import pandas as pd
 from finderPeaksSignal import peakFinder
 
@@ -55,7 +57,8 @@ def scaling(landmarks, scale='THUMBSIZE'):
             newScale.append(prevScale[-1])
 
     #factor used to adjust scale
-    return np.max(prevScale)/np.max(newScale)
+    return np.max(median_filter(prevScale,3))/np.max(median_filter(newScale,3))
+    # return np.max(prevScale)/np.max(newScale)
 
 def get_output(up_sample_signal):
     distance, velocity, peaks, indexPositiveVelocity, indexNegativeVelocity = peakFinder(up_sample_signal, fs=60,
