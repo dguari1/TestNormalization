@@ -173,35 +173,35 @@ def main():
     listFiles = os.listdir(inputFolder)
 
     for file in listFiles:
+        if 'json' in file:
+            f = open(os.path.join(inputFolder,file), encoding="UTF-8")
+            data = json.load(f)
+            f.close()
 
-        f = open(os.path.join(inputFolder,file))
-        data = json.load(f)
-        f.close()
-
-        if 'allLandMarks' in data:
-            landMarks = data['allLandMarks']
-            linePlotData = data['linePlot']['data']
-            linePlotTime = data['linePlot']['time']
-        elif 'landMarks' in data:
-            landMarks = data['landMarks'][0]
-            linePlotData = data['linePlot']['data']
-            linePlotTime = data['linePlot']['time']
-        else:
-            landMarks = []
-            linePlotData = []
-            linePlotTime = []
-        
-        if len(landMarks)==0:
-            print(f'File {file} does not contain landmarks')
-            continue
-        else:
-            #compute scaling factor
-            scalingFactor = scaling(landMarks)
-            #scale signal and recompute parameters
-            outParameters = get_output(np.array(linePlotData)*scalingFactor)
-            #save to csv
-            cvsFilename = get_fileName(file, 'output')
-            pd.DataFrame.from_dict(data=outParameters, orient='index').to_csv(cvsFilename, header=False)
+            if 'allLandMarks' in data:
+                landMarks = data['allLandMarks']
+                linePlotData = data['linePlot']['data']
+                linePlotTime = data['linePlot']['time']
+            elif 'landMarks' in data:
+                landMarks = data['landMarks'][0]
+                linePlotData = data['linePlot']['data']
+                linePlotTime = data['linePlot']['time']
+            else:
+                landMarks = []
+                linePlotData = []
+                linePlotTime = []
+            
+            if len(landMarks)==0:
+                print(f'File {file} does not contain landmarks')
+                continue
+            else:
+                #compute scaling factor
+                scalingFactor = scaling(landMarks, 'THUMBSIZE')
+                #scale signal and recompute parameters
+                outParameters = get_output(np.array(linePlotData)*scalingFactor)
+                #save to csv
+                cvsFilename = get_fileName(file, 'output')
+                pd.DataFrame.from_dict(data=outParameters, orient='index').to_csv(cvsFilename, header=False)
 
 
 if __name__ == "__main__":
