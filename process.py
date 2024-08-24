@@ -117,8 +117,23 @@ def get_output(up_sample_signal):
     rangeCycleDuration = np.max(np.diff(peakTime)) - np.min(np.diff(peakTime))
     rate = len(peaks) / (peaks[-1]['closingValleyIndex'] - peaks[0]['openingValleyIndex']) / (1 / 60)
 
-    earlyPeaks = peaks[:len(peaks) // 2]
-    latePeaks = peaks[-len(peaks) // 2:]
+    # earlyPeaks = peaks[:len(peaks) // 2]
+    # latePeaks = peaks[-len(peaks) // 2:]
+    # # amplitudeDecay = np.mean(distance[:len(peaks) // 3]) / np.mean(distance[-len(peaks) // 3:])
+    # # velocityDecay = np.sqrt(
+    # #     np.mean(velocity[earlyPeaks[0]['openingValleyIndex']:earlyPeaks[-1]['closingValleyIndex']] ** 2)) / np.sqrt(
+    # #     np.mean(velocity[latePeaks[0]['openingValleyIndex']:latePeaks[-1]['closingValleyIndex']] ** 2))
+    # rateDecay = (len(earlyPeaks) / ((earlyPeaks[-1]['closingValleyIndex'] - earlyPeaks[0]['openingValleyIndex']) / (1 / 60))) / (
+    #                     len(latePeaks) / (
+    #                     (latePeaks[-1]['closingValleyIndex'] - latePeaks[0]['openingValleyIndex']) / (1 / 60)))
+
+    # amplitudeDecay = np.array(amplitude)[:len(amplitude)//2].mean() / np.array(amplitude)[len(amplitude)//2:].mean()
+    # velocityDecay = np.array(rmsVelocity)[:len(rmsVelocity)//2].mean() / np.array(rmsVelocity)[len(rmsVelocity)//2:].mean()
+
+
+
+    earlyPeaks = peaks[:len(peaks) // 3]
+    latePeaks = peaks[-len(peaks) // 3:]
     # amplitudeDecay = np.mean(distance[:len(peaks) // 3]) / np.mean(distance[-len(peaks) // 3:])
     # velocityDecay = np.sqrt(
     #     np.mean(velocity[earlyPeaks[0]['openingValleyIndex']:earlyPeaks[-1]['closingValleyIndex']] ** 2)) / np.sqrt(
@@ -127,8 +142,8 @@ def get_output(up_sample_signal):
                         len(latePeaks) / (
                         (latePeaks[-1]['closingValleyIndex'] - latePeaks[0]['openingValleyIndex']) / (1 / 60)))
 
-    amplitudeDecay = np.array(amplitude)[:len(amplitude)//2].mean() / np.array(amplitude)[len(amplitude)//2:].mean()
-    velocityDecay = np.array(rmsVelocity)[:len(rmsVelocity)//2].mean() / np.array(rmsVelocity)[len(rmsVelocity)//2:].mean()
+    amplitudeDecay = np.array(amplitude)[:len(amplitude)//3].mean() / np.array(amplitude)[-len(amplitude)//3:].mean()
+    velocityDecay = np.array(speed)[:len(speed)//3].mean() / np.array(speed)[-len(speed)//3:].mean()
 
 
 
@@ -176,6 +191,7 @@ def main():
     listFiles = os.listdir(inputFolder)
 
     for file in listFiles:
+        print(file)
         if 'json' in file:
             f = open(os.path.join(inputFolder,file), encoding="UTF-8")
             data = json.load(f)
@@ -185,6 +201,9 @@ def main():
                 landMarks = data['allLandMarks']
                 linePlotData = data['linePlot']['data']
                 linePlotTime = data['linePlot']['time']
+
+                if len(landMarks[0]) == 0:
+                    landMarks[0]=landMarks[1]
             elif 'landMarks' in data:
                 landMarks = data['landMarks'][0]
                 linePlotData = data['linePlot']['data']
