@@ -34,39 +34,49 @@ PINKY_DIP = 19
 PINKY_TIP = 20
 
 
+def decayEstimation(Peaks, nSelectedPeaks = 4):
+
+    # slopes = []
+    # for i in range(0,len(Peaks)//2):
+    #     selectedPeaks = Peaks[i:i+nSelectedPeaks]
+    #     m, b  = np.polyfit(np.arange(nSelectedPeaks),selectedPeaks,1)
+    #     if m < 0:
+    #         slopes.append(m)
+
+    slope, b = np.polyfit(np.arange(len(Peaks)),Peaks,1)
+    if slope<0:
+        return slope
+    else:
+        return 0
+
+
 def scaling(landmarks, scale='THUMBSIZE'):
     
     prevScale = []
     newScale = []
 
     for landmark in landmarks:
-        # Check if the landmark contains all necessary points
-        if len(landmark) <= max(MIDDLE_FINGER_TIP, THUMB_TIP, THUMB_CMC):
-            print(f"Landmark data is incomplete: {landmark}")
-            continue
 
-        wrist, middle_finger_tip = landmark[WRIST], landmark[MIDDLE_FINGER_TIP]
-        dist = math.dist(wrist, middle_finger_tip)
-        prevScale.append(dist)
+        if len(landmark)>0:
+        
+            wrist, middle_finger_tip = landmark[WRIST], landmark[MIDDLE_FINGER_TIP]
+            dist = math.dist(wrist, middle_finger_tip)
+            prevScale.append(dist)
 
-        if scale == 'THUMBSIZE':
-            thumb_base, thumb_tip = landmark[THUMB_CMC], landmark[THUMB_TIP]
-            dist = math.dist(thumb_base, thumb_tip)
-            newScale.append(dist)
-        elif scale == 'INDEXSIZE':
-            index_base, index_tip = landmark[INDEX_FINGER_MCP], landmark[MIDDLE_FINGER_TIP]
-            dist = math.dist(index_base, index_tip)
-            newScale.append(dist)
-        else:
-            newScale.append(prevScale[-1])
+            if scale == 'THUMBSIZE':
+                thumb_base, thumb_tip = landmark[THUMB_CMC], landmark[THUMB_TIP]
+                dist = math.dist(thumb_base, thumb_tip)
+                newScale.append(dist)
+            elif scale == 'INDEXSIZE':
+                index_base, index_tip = landmark[INDEX_FINGER_MCP], landmark[MIDDLE_FINGER_TIP]
+                dist = math.dist(index_base, index_tip)
+                newScale.append(dist)
+            else:
+                newScale.append(prevScale[-1])
 
-    if not prevScale or not newScale:
-        print("Scaling failed due to insufficient data.")
-        return 1  # Return a default scaling factor to avoid division by zero
-
-    # Factor used to adjust scale
-    return np.max(median_filter(prevScale, 3)) / np.max(median_filter(newScale, 3))
-
+    #factor used to adjust scale
+    return np.max(median_filter(prevScale,3))/np.max(median_filter(newScale,3))
+    # return np.max(prevScale)/np.max(newScale)
 
 def get_output(up_sample_signal):
     distance, velocity, peaks, indexPositiveVelocity, indexNegativeVelocity = peakFinder(up_sample_signal, fs=60,
@@ -125,8 +135,23 @@ def get_output(up_sample_signal):
     rangeCycleDuration = np.max(np.diff(peakTime)) - np.min(np.diff(peakTime))
     rate = len(peaks) / (peaks[-1]['closingValleyIndex'] - peaks[0]['openingValleyIndex']) / (1 / 60)
 
-    earlyPeaks = peaks[:len(peaks) // 2]
-    latePeaks = peaks[-len(peaks) // 2:]
+    # earlyPeaks = peaks[:len(peaks) // 2]
+    # latePeaks = peaks[-len(peaks) // 2:]
+    # # amplitudeDecay = np.mean(distance[:len(peaks) // 3]) / np.mean(distance[-len(peaks) // 3:])
+    # # velocityDecay = np.sqrt(
+    # #     np.mean(velocity[earlyPeaks[0]['openingValleyIndex']:earlyPeaks[-1]['closingValleyIndex']] ** 2)) / np.sqrt(
+    # #     np.mean(velocity[latePeaks[0]['openingValleyIndex']:latePeaks[-1]['closingValleyIndex']] ** 2))
+    # rateDecay = (len(earlyPeaks) / ((earlyPeaks[-1]['closingValleyIndex'] - earlyPeaks[0]['openingValleyIndex']) / (1 / 60))) / (
+    #                     len(latePeaks) / (
+    #                     (latePeaks[-1]['closingValleyIndex'] - latePeaks[0]['openingValleyIndex']) / (1 / 60)))
+
+    # amplitudeDecay = np.array(amplitude)[:len(amplitude)//2].mean() / np.array(amplitude)[len(amplitude)//2:].mean()
+    # velocityDecay = np.array(rmsVelocity)[:len(rmsVelocity)//2].mean() / np.array(rmsVelocity)[len(rmsVelocity)//2:].mean()
+
+
+
+    earlyPeaks = peaks[:len(peaks) // 3]
+    latePeaks = peaks[-len(peaks) // 3:]
     # amplitudeDecay = np.mean(distance[:len(peaks) // 3]) / np.mean(distance[-len(peaks) // 3:])
     # velocityDecay = np.sqrt(
     #     np.mean(velocity[earlyPeaks[0]['openingValleyIndex']:earlyPeaks[-1]['closingValleyIndex']] ** 2)) / np.sqrt(
@@ -138,7 +163,8 @@ def get_output(up_sample_signal):
     amplitudeDecay = np.array(amplitude)[:len(amplitude)//3].mean() / np.array(amplitude)[-len(amplitude)//3:].mean()
     velocityDecay = np.array(speed)[:len(speed)//3].mean() / np.array(speed)[-len(speed)//3:].mean()
 
-
+    # amplitudeDecay = decayEstimation(amplitude)
+    # velocityDecay = decayEstimation(speed)
 
     cvAmplitude = stdAmplitude / meanAmplitude
     cvSpeed = stdSpeed / meanSpeed
@@ -174,28 +200,19 @@ def get_output(up_sample_signal):
     }
     return jsonFinal
 
-def get_fileName(file, outputFolder, normalization_method):
-    base_name = os.path.splitext(file)[0]
-    new_name = f"{base_name}_{normalization_method}_normalized.csv"
-    return os.path.join(outputFolder, new_name)
+def get_fileName(file, outputFolder):
 
+    return os.path.join(outputFolder, os.path.splitext(file)[0] + '.csv') 
 
 def main():
-    inputFolder = 'data'
-    outputFolder = 'output'
-    normalization_method = 'index'  # Specify the normalization method here
-    listFiles = os.listdir(inputFolder)
-    processed_files = 0
-    failed_files = 0
-    total_files = 0
 
-    if not os.path.exists(outputFolder):
-        os.makedirs(outputFolder)
+    inputFolder = 'data'
+    listFiles = os.listdir(inputFolder)
 
     for file in listFiles:
+        print(file)
         if 'json' in file:
-            total_files += 1
-            f = open(os.path.join(inputFolder, file), encoding="UTF-8")
+            f = open(os.path.join(inputFolder,file), encoding="UTF-8")
             data = json.load(f)
             f.close()
 
@@ -203,6 +220,9 @@ def main():
                 landMarks = data['allLandMarks']
                 linePlotData = data['linePlot']['data']
                 linePlotTime = data['linePlot']['time']
+
+                if len(landMarks[0]) == 0:
+                    landMarks[0]=landMarks[1]
             elif 'landMarks' in data:
                 landMarks = data['landMarks'][0]
                 linePlotData = data['linePlot']['data']
@@ -211,45 +231,23 @@ def main():
                 landMarks = []
                 linePlotData = []
                 linePlotTime = []
-
-            if len(landMarks) == 0:
+            
+            if len(landMarks)==0:
                 print(f'File {file} does not contain landmarks')
-                failed_files += 1
-                continue
-            elif any(len(landmark) == 0 for landmark in landMarks):
-                print(f'File {file} contains empty landmark data')
-                failed_files += 1
                 continue
             else:
-                # Compute scaling factor
+                #compute scaling factor
                 scalingFactor = scaling(landMarks, 'THUMBSIZE')
-                if scalingFactor == 1:
-                    print(f'Scaling failed for file {file}')
-                    failed_files += 1
-                    continue
-                # Scale signal and recompute parameters
-                try:
-                    outParameters = get_output(np.array(linePlotData) * scalingFactor)
-                    # Save to csv
-                    cvsFilename = get_fileName(file, outputFolder, normalization_method)
-                    pd.DataFrame.from_dict(data=outParameters, orient='index').to_csv(cvsFilename, header=False)
-                    processed_files += 1
-                    print(f'Processed file {file} successfully')
-                except Exception as e:
-                    print(f'Failed to process file {file}: {e}')
-                    failed_files += 1
+                #scale signal and recompute parameters
+                outParameters = get_output(np.array(linePlotData)*scalingFactor)
+                #save to csv
+                cvsFilename = get_fileName(file, 'output')
+                pd.DataFrame.from_dict(data=outParameters, orient='index').to_csv(cvsFilename, header=False)
 
-    if processed_files == 0:
-        print("No files were successfully processed. Please check your input data.")
-    else:
-        print(f"Summary:")
-        print(f"Total files analyzed: {total_files}")
-        print(f"Files normalized correctly: {processed_files}")
-        print(f"Files failed: {failed_files}")
 
 if __name__ == "__main__":
     main()
-
+            
 
 
 
