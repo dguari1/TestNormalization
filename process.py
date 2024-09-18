@@ -34,6 +34,22 @@ PINKY_DIP = 19
 PINKY_TIP = 20
 
 
+def decayEstimation(Peaks, nSelectedPeaks = 4):
+
+    # slopes = []
+    # for i in range(0,len(Peaks)//2):
+    #     selectedPeaks = Peaks[i:i+nSelectedPeaks]
+    #     m, b  = np.polyfit(np.arange(nSelectedPeaks),selectedPeaks,1)
+    #     if m < 0:
+    #         slopes.append(m)
+
+    slope, b = np.polyfit(np.arange(len(Peaks)),Peaks,1)
+    if slope<0:
+        return slope
+    else:
+        return 0
+
+
 def scaling(landmarks, scale='THUMBSIZE'):
     
     prevScale = []
@@ -41,20 +57,22 @@ def scaling(landmarks, scale='THUMBSIZE'):
 
     for landmark in landmarks:
 
-        wrist, middle_finger_tip = landmark[WRIST], landmark[MIDDLE_FINGER_TIP]
-        dist = math.dist(wrist, middle_finger_tip)
-        prevScale.append(dist)
+        if len(landmark)>0:
+        
+            wrist, middle_finger_tip = landmark[WRIST], landmark[MIDDLE_FINGER_TIP]
+            dist = math.dist(wrist, middle_finger_tip)
+            prevScale.append(dist)
 
-        if scale == 'THUMBSIZE':
-            thumb_base, thumb_tip = landmark[THUMB_CMC], landmark[THUMB_TIP]
-            dist = math.dist(thumb_base, thumb_tip)
-            newScale.append(dist)
-        elif scale == 'INDEXSIZE':
-            index_base, index_tip = landmark[INDEX_FINGER_MCP], landmark[MIDDLE_FINGER_TIP]
-            dist = math.dist(index_base, index_tip)
-            newScale.append(dist)
-        else:
-            newScale.append(prevScale[-1])
+            if scale == 'THUMBSIZE':
+                thumb_base, thumb_tip = landmark[THUMB_CMC], landmark[THUMB_TIP]
+                dist = math.dist(thumb_base, thumb_tip)
+                newScale.append(dist)
+            elif scale == 'INDEXSIZE':
+                index_base, index_tip = landmark[INDEX_FINGER_MCP], landmark[MIDDLE_FINGER_TIP]
+                dist = math.dist(index_base, index_tip)
+                newScale.append(dist)
+            else:
+                newScale.append(prevScale[-1])
 
     #factor used to adjust scale
     return np.max(median_filter(prevScale,3))/np.max(median_filter(newScale,3))
@@ -145,7 +163,8 @@ def get_output(up_sample_signal):
     amplitudeDecay = np.array(amplitude)[:len(amplitude)//3].mean() / np.array(amplitude)[-len(amplitude)//3:].mean()
     velocityDecay = np.array(speed)[:len(speed)//3].mean() / np.array(speed)[-len(speed)//3:].mean()
 
-
+    # amplitudeDecay = decayEstimation(amplitude)
+    # velocityDecay = decayEstimation(speed)
 
     cvAmplitude = stdAmplitude / meanAmplitude
     cvSpeed = stdSpeed / meanSpeed
@@ -162,22 +181,22 @@ def get_output(up_sample_signal):
             "MeanRMSVelocity": meanRMSVelocity,
             "StdRMSVelocity": stdRMSVelocity,
             "MeanOpeningSpeed": meanAverageOpeningSpeed,
-            "stdOpeningSpeed": stdAverageOpeningSpeed,
-            "meanClosingSpeed": meanAverageClosingSpeed,
-            "stdClosingSpeed": stdAverageClosingSpeed,
-            "meanCycleDuration": meanCycleDuration,
-            "stdCycleDuration": stdCycleDuration,
-            "rangeCycleDuration": rangeCycleDuration,
-            "rate": rate,
-            "amplitudeDecay": amplitudeDecay,
-            "velocityDecay": velocityDecay,
-            "rateDecay": rateDecay,
-            "cvAmplitude": cvAmplitude,
-            "cvCycleDuration": cvCycleDuration,
-            "cvSpeed": cvSpeed,
-            "cvRMSVelocity" : cvRMSVelocity,
-            "cvOpeningSpeed": cvAverageOpeningSpeed,
-            "cvClosingSpeed": cvAverageClosingSpeed
+            "StdOpeningSpeed": stdAverageOpeningSpeed,
+            "MeanClosingSpeed": meanAverageClosingSpeed,
+            "StdClosingSpeed": stdAverageClosingSpeed,
+            "MeanCycleDuration": meanCycleDuration,
+            "StdCycleDuration": stdCycleDuration,
+            "RangeCycleDuration": rangeCycleDuration,
+            "Rate": rate,
+            "AmplitudeDecay": amplitudeDecay,
+            "VelocityDecay": velocityDecay,
+            "RateDecay": rateDecay,
+            "CVAmplitude": cvAmplitude,
+            "CVCycleDuration": cvCycleDuration,
+            "CVSpeed": cvSpeed,
+            "CVRMSVelocity" : cvRMSVelocity,
+            "CVOpeningSpeed": cvAverageOpeningSpeed,
+            "CVClosingSpeed": cvAverageClosingSpeed
     }
     return jsonFinal
 
