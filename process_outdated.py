@@ -163,8 +163,8 @@ def get_output(up_sample_signal):
     amplitudeDecay = np.array(amplitude)[:len(amplitude)//3].mean() / np.array(amplitude)[-len(amplitude)//3:].mean()
     velocityDecay = np.array(speed)[:len(speed)//3].mean() / np.array(speed)[-len(speed)//3:].mean()
 
-    # amplitudeDecay = decayEstimation(amplitude)
-    # velocityDecay = decayEstimation(speed)
+    amplitudeDecay = decayEstimation(amplitude)
+    velocityDecay = decayEstimation(speed)
 
     cvAmplitude = stdAmplitude / meanAmplitude
     cvSpeed = stdSpeed / meanSpeed
