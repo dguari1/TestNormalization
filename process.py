@@ -4,6 +4,7 @@ import numpy as np
 import math
 import scipy.interpolate as interpolate
 from scipy.ndimage import median_filter
+import matplotlib.pyplot as plt
 
 import pandas as pd
 from finderPeaksSignal import peakFinder
@@ -70,9 +71,9 @@ def scaling(landmarks, scale='THUMBSIZE'):
                         print(f"Missing thumb landmarks in frame {idx}")
                         newScale.append(prevScale[-1])  # Use previous scale
                 elif scale == 'INDEXSIZE':
-                    required_indices = [INDEX_FINGER_MCP, MIDDLE_FINGER_TIP]
+                    required_indices = [INDEX_FINGER_MCP, INDEX_FINGER_TIP]
                     if all(idx < len(landmark) for idx in required_indices):
-                        index_base, index_tip = landmark[INDEX_FINGER_MCP], landmark[MIDDLE_FINGER_TIP]
+                        index_base, index_tip = landmark[INDEX_FINGER_MCP], landmark[INDEX_FINGER_TIP]
                         try:
                             dist = math.dist(index_base, index_tip)
                             newScale.append(dist)
@@ -248,7 +249,7 @@ def get_output(up_sample_signal):
         "CVOpeningSpeed": cvAverageOpeningSpeed,
         "CVClosingSpeed": cvAverageClosingSpeed,
     }
-    return jsonFinal
+    return jsonFinal, distance
 
 def get_fileName(file, outputFolder, scalingMethod):
     baseName = os.path.splitext(file)[0]
@@ -258,9 +259,12 @@ def get_fileName(file, outputFolder, scalingMethod):
     return os.path.join(outputFolder, newFileName)
 
 def main():
-    inputFolder = 'data'
+    inputFolder = 'GoodQualityJSONFiles'
     outputFolder = 'output'  # Ensure this folder exists
-    scalingMethod = 'THUMBSIZE'  # You can change this as needed
+    scalingMethod = 'NOSCALING'  # You can change this as needed
+                                 #avaliable options are 'THUMBSIZE', 'INDEXSIZE', 'NOSCALING'
+                                 #'NOSCALING' will preserve the original scaling method (hand size)
+    plotResults = True
     listFiles = os.listdir(inputFolder)
 
     # Ensure the output directory exists
@@ -281,7 +285,7 @@ def main():
                 # Check if the first element is empty
                 if len(landMarks) > 1 and len(landMarks[0]) == 0:
                     landMarks[0] = landMarks[1]
-            elif 'landMarks' in data:
+            elif 'landMarks' in data:  
                 landMarks = data['landMarks'][0]
                 linePlotData = data['linePlot']['data']
                 linePlotTime = data['linePlot']['time']
@@ -295,15 +299,31 @@ def main():
                 continue
             else:
                 # Compute scaling factor
-                scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod)
-                # Scale signal and recompute parameters
-                outParameters = get_output(np.array(linePlotData) * scalingFactor)
+                if scalingMethod == 'NOSCALING':
+                    outParameters, distance = get_output(np.array(linePlotData))
+                    actualScalingMethod = 'NOSCALING'
+                else:
+                    scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod)
+                    # Scale signal and recompute parameters
+                    outParameters, distance = get_output(np.array(linePlotData) * scalingFactor)
                 if outParameters is not None:
                     # Save to CSV
                     cvsFilename = get_fileName(file, outputFolder, actualScalingMethod)
                     pd.DataFrame.from_dict(data=outParameters, orient='index').to_csv(cvsFilename, header=False)
+                    if plotResults:
+                        plt.figure(figsize=(10, 6))
+                        plt.plot(np.arange(len(distance)) / 60, distance)
+                        plt.xlabel('Time (s)')
+                        plt.ylabel('Distance')
+                        plt.title('Distance Signal')
+                        plt.grid(True)
+                        plt.savefig(cvsFilename.replace('.csv', '.png'))
+                        plt.close()
+                
                 else:
                     print(f"Skipping file {file} due to insufficient data.")
+
+                
 
 if __name__ == "__main__":
     main()
