@@ -3,6 +3,7 @@ import json
 import numpy as np
 import math
 import scipy.interpolate as interpolate
+from scipy import signal
 from scipy.ndimage import median_filter
 import matplotlib.pyplot as plt
 
@@ -298,14 +299,23 @@ def main():
                 print(f'File {file} does not contain landmarks')
                 continue
             else:
+                start_time = linePlotTime[0]
+                end_time = linePlotTime[-1]
+                duration = end_time - start_time
+
+                # upsample the signal to 60 FPS, the find peaks stage works best at 60 FPS
+                fps = 60
+                time_vector = np.linspace(0, duration, int(duration * fps))
+                up_sample_signal = signal.resample(np.array(linePlotData), len(time_vector))
                 # Compute scaling factor
                 if scalingMethod == 'NOSCALING':
-                    outParameters, distance = get_output(np.array(linePlotData))
+                    outParameters, distance = get_output(up_sample_signal)
                     actualScalingMethod = 'NOSCALING'
                 else:
                     scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod)
                     # Scale signal and recompute parameters
-                    outParameters, distance = get_output(np.array(linePlotData) * scalingFactor)
+                    outParameters, distance = get_output(up_sample_signal * scalingFactor)
+                    
                 if outParameters is not None:
                     # Save to CSV
                     cvsFilename = get_fileName(file, outputFolder, actualScalingMethod)
