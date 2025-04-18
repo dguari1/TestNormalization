@@ -116,6 +116,8 @@ def get_output(up_sample_signal):
     speed = []
     averageOpeningSpeed = []
     averageClosingSpeed = []
+    maxOpeningSpeed = []
+    maxClosingSpeed = []
     cycleDuration = []
 
     for idx, peak in enumerate(peaks):
@@ -135,21 +137,34 @@ def get_output(up_sample_signal):
 
         # Opening Velocity
         rmsVelocity.append(np.sqrt(np.mean(velocity[peak['openingValleyIndex']:peak['closingValleyIndex']] ** 2)))
-
+        # Speed
         speed.append(
             (y - f(x)) / ((peak['closingValleyIndex'] - peak['openingValleyIndex']) * (1 / 60))
         )
+        #Opening Speed
         averageOpeningSpeed.append(
             (y - f(x)) / ((peak['peakIndex'] - peak['openingValleyIndex']) * (1 / 60))
         )
+        #closing Speed
         averageClosingSpeed.append(
             (y - f(x)) / ((peak['closingValleyIndex'] - peak['peakIndex']) * (1 / 60))
         )
+        #max Opening Speed
+        maxOpeningSpeed.append(
+            np.max(velocity[peak['openingValleyIndex']:peak['peakIndex']])
+        )
+        #max Closing Speed
+        maxClosingSpeed.append(
+            np.max(np.abs(velocity[peak['peakIndex']:peak['closingValleyIndex']]))
+        )
+        # Cycle duration
         cycleDuration.append(
             (peak['closingValleyIndex'] - peak['openingValleyIndex']) * (1 / 60)
         )
         # Timing
         peakTime.append(peak['peakIndex'] * (1 / 60))
+
+
 
     if len(amplitude) == 0:
         print("No peaks detected; cannot compute output parameters.")
@@ -163,17 +178,28 @@ def get_output(up_sample_signal):
 
     meanRMSVelocity = np.mean(rmsVelocity)
     stdRMSVelocity = np.std(rmsVelocity)
+
     meanAverageOpeningSpeed = np.mean(averageOpeningSpeed)
     stdAverageOpeningSpeed = np.std(averageOpeningSpeed)
+
     meanAverageClosingSpeed = np.mean(averageClosingSpeed)
     stdAverageClosingSpeed = np.std(averageClosingSpeed)
 
+    meanMaxOpeningSpeed = np.mean(maxOpeningSpeed)
+    stdMaxOpeningSpeed = np.std(maxOpeningSpeed)
+
+    meanMaxClosingSpeed = np.mean(maxClosingSpeed)
+    stdMaxClosingSpeed = np.std(maxClosingSpeed)
+
+
     meanCycleDuration = np.mean(cycleDuration)
     stdCycleDuration = np.std(cycleDuration)
+
     if len(peakTime) > 1:
         rangeCycleDuration = np.max(np.diff(peakTime)) - np.min(np.diff(peakTime))
     else:
         rangeCycleDuration = 0
+
     rate = len(peaks) / ((peaks[-1]['closingValleyIndex'] - peaks[0]['openingValleyIndex']) * (1 / 60))
 
     # Initialize decay variables
@@ -224,6 +250,8 @@ def get_output(up_sample_signal):
     cvRMSVelocity = stdRMSVelocity / meanRMSVelocity if meanRMSVelocity != 0 else np.nan
     cvAverageOpeningSpeed = stdAverageOpeningSpeed / meanAverageOpeningSpeed if meanAverageOpeningSpeed != 0 else np.nan
     cvAverageClosingSpeed = stdAverageClosingSpeed / meanAverageClosingSpeed if meanAverageClosingSpeed != 0 else np.nan
+    cvMaxOpeningSpeed = stdMaxOpeningSpeed / meanMaxOpeningSpeed if meanMaxOpeningSpeed != 0 else np.nan
+    cvMaxClosingSpeed = stdMaxClosingSpeed / meanMaxClosingSpeed if meanMaxClosingSpeed != 0 else np.nan
 
     jsonFinal = {
         "MeanAmplitude": meanAmplitude,
@@ -236,6 +264,10 @@ def get_output(up_sample_signal):
         "StdOpeningSpeed": stdAverageOpeningSpeed,
         "MeanClosingSpeed": meanAverageClosingSpeed,
         "StdClosingSpeed": stdAverageClosingSpeed,
+        "MeanMaxOpeningSpeed": meanMaxOpeningSpeed,
+        "StdMaxOpeningSpeed": stdMaxOpeningSpeed,
+        "MeanMaxClosingSpeed": meanMaxClosingSpeed,
+        "StdMaxClosingSpeed": stdMaxClosingSpeed,
         "MeanCycleDuration": meanCycleDuration,
         "StdCycleDuration": stdCycleDuration,
         "RangeCycleDuration": rangeCycleDuration,
@@ -244,12 +276,15 @@ def get_output(up_sample_signal):
         "VelocityDecay": velocityDecay,
         "RateDecay": rateDecay,
         "CVAmplitude": cvAmplitude,
-        "CVCycleDuration": cvCycleDuration,
         "CVSpeed": cvSpeed,
         "CVRMSVelocity": cvRMSVelocity,
         "CVOpeningSpeed": cvAverageOpeningSpeed,
         "CVClosingSpeed": cvAverageClosingSpeed,
+        "CVMaxOpeningSpeed": cvMaxOpeningSpeed,
+        "CVMaxClosingSpeed": cvMaxClosingSpeed,
+        "CVCycleDuration": cvCycleDuration,
     }
+    
     return jsonFinal, distance
 
 def get_fileName(file, outputFolder, scalingMethod):
@@ -315,7 +350,7 @@ def main():
                     scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod)
                     # Scale signal and recompute parameters
                     outParameters, distance = get_output(up_sample_signal * scalingFactor)
-                    
+
                 if outParameters is not None:
                     # Save to CSV
                     cvsFilename = get_fileName(file, outputFolder, actualScalingMethod)
