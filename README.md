@@ -10,8 +10,11 @@ python process.py
 
 This will generate `.csv` files in the folder `output` containing the measurements with the new normalization factor. 
 
-There are two possible normalization factors 
-1. **THUMBSIZE** 
-3. INDEXSIZE
+There are three options:
+1. **'THUMBSIZE'**
+2. 'INDEXSIZE'
+3. 'NOSCALING' 
 
-THUMBSIZE is the default normalization factor. To change the normalization factor, open `process.py` and in line 199, change THUMBSIZE to INDEX
+THUMBSIZE is the default normalization factor. To change the normalization factor, open `process.py` and change the variable ``scalingMethod`` in ``main()``. 
+
+NOSCALING will use the same scaling factor currently available in the JSON file. 
