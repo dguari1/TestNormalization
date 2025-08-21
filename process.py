@@ -223,7 +223,8 @@ def get_output(up_sample_signal):
         #pause time 
         if idx < Npeaks - 1:
             pauseDuration.append((peaks[idx + 1]['openingValleyIndex'] - peak['closingValleyIndex']) * (1 / fs))
-
+            if pauseDuration[-1] < 0:
+                pauseDuration[-1] = 0
 
         # calculate hesitations in the openeing-closing movement sequences 
         abs_velocity_segment = np.abs(velocity[peak['openingValleyIndex']+1:peak['closingValleyIndex']-1])
@@ -240,16 +241,17 @@ def get_output(up_sample_signal):
 
         # calculate hesitations in the during pauses
         if idx < Npeaks - 1:
-            abs_velocity_segment = np.abs(velocity[peak['closingValleyIndex']:peaks[idx + 1]['openingValleyIndex']+1])
-            # Count the number of times the absolute value of velocity crosses the threshold defined by maxVelocity*0.25
-            crossings = np.sum((abs_velocity_segment[:-1] < maxVelocity*0.25) & (abs_velocity_segment[1:] >= maxVelocity*0.25)) + \
-                        np.sum((abs_velocity_segment[:-1] >= maxVelocity*0.25) & (abs_velocity_segment[1:] < maxVelocity*0.25))
-            
-            # If the number of crossings is greater than 4, a hesitation occurred
-            if crossings > 4:
-                hesitationsinPause.append(1)
-            else:
-                hesitationsinPause.append(0)
+            if pauseDuration[-1] > 0.2: #only consider pauses longer than 0.1 seconds 
+                abs_velocity_segment = np.abs(velocity[peak['closingValleyIndex']:peaks[idx + 1]['openingValleyIndex']+1])
+                # Count the number of times the absolute value of velocity crosses the threshold defined by maxVelocity*0.25
+                crossings = np.sum((abs_velocity_segment[:-1] < maxVelocity*0.25) & (abs_velocity_segment[1:] >= maxVelocity*0.25)) + \
+                            np.sum((abs_velocity_segment[:-1] >= maxVelocity*0.25) & (abs_velocity_segment[1:] < maxVelocity*0.25))
+                
+                # If the number of crossings is greater than 4, a hesitation occurred
+                if crossings > 4:
+                    hesitationsinPause.append(1)
+                else:
+                    hesitationsinPause.append(0)
 
 
     if len(amplitude) == 0:
@@ -258,6 +260,7 @@ def get_output(up_sample_signal):
 
     meanAmplitude = np.mean(amplitude)
     stdAmplitude = np.std(amplitude)
+  
 
     meanSpeed = np.mean(speed)
     stdSpeed = np.std(speed)
@@ -385,12 +388,12 @@ def get_output(up_sample_signal):
         "Frequency": frequency,
         "AmplitudeDecay": amplitudeDecay,
         "VelocityDecay": velocityDecay,
-        "RateDecay": rateDecay,
+        # "RateDecay": rateDecay,
         "RangeCycleDuration": rangeCycleDuration,
-        "NumbeofPauses": numPauses,
+        "NumberofPauses": numPauses,
         "numberofHesitations": hesitations,
     }
-    return jsonFinal, distance
+    return jsonFinal, distance, velocity
 
 def get_fileName(file, outputFolder, scalingMethod):
     baseName = os.path.splitext(file)[0]
@@ -467,14 +470,14 @@ def main():
                     up_sample_signal = signal.resample(np.array(linePlotData), len(time_vector))
                     # Compute scaling factor
                     if scalingMethod == 'NOSCALING':
-                        outParameters, distance = get_output(up_sample_signal)
+                        outParameters, distance, velocity = get_output(up_sample_signal)
                         actualScalingMethod = 'NOSCALING'
                     else:
                         scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod)
                         
                         # Scale signal and recompute parameters
 
-                        outParameters, distance = get_output(up_sample_signal * scalingFactor)
+                        outParameters, distance, velocity = get_output(up_sample_signal * scalingFactor)
        
                     if outParameters is not None:
                         # Save to CSV
