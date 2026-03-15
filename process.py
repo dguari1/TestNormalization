@@ -35,10 +35,10 @@ PINKY_PIP = 18
 PINKY_DIP = 19
 PINKY_TIP = 20
 
-def ProcessCustomPeaks(up_sample_signal,time,start_time,peaks,valleys_start,valleys_end,fs=60, cutOffFrequency=10): 
+def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end,fs=60, cutOffFrequency=10): 
 
     b, a = signal.butter(2, cutOffFrequency, fs=fs, btype='low', analog=False)
-    distance = signal.filtfilt(b, a, up_sample_signal)  
+    distance = signal.filtfilt(b, a, distance)  
     velocity = signal.savgol_filter(distance, 9, 3, deriv=1) / (1 / fs)
 
     informationPeaks = []
@@ -48,11 +48,13 @@ def ProcessCustomPeaks(up_sample_signal,time,start_time,peaks,valleys_start,vall
         vs = vs - start_time
         ve = ve - start_time
         p = p - start_time
-
         #find the index of the peak and valleys
         openingValleyIndex = np.argmin(np.abs(time - vs))-1
+        openingValleyIndex = openingValleyIndex if openingValleyIndex >= 0 else 0
         closingValleyIndex = np.argmin(np.abs(time - ve))+1
+        closingValleyIndex = closingValleyIndex if closingValleyIndex<=len(distance) else len(distance)
         peakIndex = np.argmin(np.abs(time - p))
+
 
         #find the opening peak index by moving right from the opening valley until you find where the velocity is zero (end of positive segment)
         deriv = velocity.copy()
@@ -60,11 +62,13 @@ def ProcessCustomPeaks(up_sample_signal,time,start_time,peaks,valleys_start,vall
         deriv = deriv ** 2
 
         #get the max speed point between opening valley and peak
-        openingMaxSpeedIndex = (openingValleyIndex-1) + np.argmax(deriv[openingValleyIndex-1:peakIndex])
+        if openingValleyIndex > 0 :
+            openingMaxSpeedIndex = (openingValleyIndex-1) + np.argmax(deriv[openingValleyIndex-1:peakIndex])
+        else:
+            openingMaxSpeedIndex = (openingValleyIndex-1) + np.argmax(deriv[openingValleyIndex:peakIndex])
 
-
+        #find the peak of the opening sequence
         idxPeak = openingMaxSpeedIndex + 1
-
         if idxPeak < len(deriv):
             while deriv[idxPeak] != 0:
                 if idxPeak >= len(deriv) - 1:
@@ -72,9 +76,18 @@ def ProcessCustomPeaks(up_sample_signal,time,start_time,peaks,valleys_start,vall
                     break
 
                 idxPeak += 1
-
         openingPeakIndex = idxPeak
 
+        #update the valley 
+        idxValley = openingMaxSpeedIndex - 1
+        if idxValley >= 0:
+            while deriv[idxValley] != 0:
+                if idxValley <= 0:
+                    idxValley = np.nan
+                    break
+
+                idxValley -= 1
+        openingValleyIndex = idxValley
 
         #find the closing peak index by moving left from the closing valley until you find where the velocity is zero (end of negative segment)
         deriv = velocity.copy()
@@ -82,9 +95,12 @@ def ProcessCustomPeaks(up_sample_signal,time,start_time,peaks,valleys_start,vall
         deriv = deriv ** 2
 
 
+        if closingValleyIndex <= len(deriv):
+            closingMaxSpeedIndex = (peakIndex) + np.argmax(deriv[peakIndex:closingValleyIndex+1])
+        else:
+            closingMaxSpeedIndex = (peakIndex) + np.argmax(deriv[peakIndex:closingValleyIndex])
 
-        closingMaxSpeedIndex = (peakIndex) + np.argmax(deriv[peakIndex:closingValleyIndex+1])
-
+        #find the peak of the closing sequence
         idxPeak = closingMaxSpeedIndex - 1
         if idxPeak >= 0:
             # Move left until you find where the velocity is zero (end of negative segment)
@@ -94,11 +110,19 @@ def ProcessCustomPeaks(up_sample_signal,time,start_time,peaks,valleys_start,vall
                     idxPeak = np.nan
                     break
                 idxPeak -= 1
-
         closingPeakIndex = idxPeak
 
-        
-
+        #update the valley of the closing sequence
+        idxValley = closingMaxSpeedIndex + 1
+        if idxValley < len(deriv):
+            # Move right until you find where the velocity is zero (end of negative segment)
+            while deriv[idxValley] != 0:
+                if idxValley >= len(deriv) - 1:
+                    # If you reach the end of the signal, set idxValley to NaN and break
+                    idxValley = np.nan
+                    break
+                idxValley += 1
+        closingValleyIndex = idxValley
 
         #put all this information together in a dictionary
         peakInfo = {
@@ -111,7 +135,8 @@ def ProcessCustomPeaks(up_sample_signal,time,start_time,peaks,valleys_start,vall
                 'peakIndex': peakIndex,
                 }
         
-        informationPeaks.append(peakInfo)
+        if not (np.isnan(openingPeakIndex) or np.isnan(closingPeakIndex) or np.isnan(openingValleyIndex) or np.isnan(closingValleyIndex) or np.isnan(openingMaxSpeedIndex) or np.isnan(closingMaxSpeedIndex) or np.isnan(peakIndex)):
+            informationPeaks.append(peakInfo)
 
     return distance, velocity, informationPeaks
 
@@ -846,7 +871,7 @@ def main():
                         pd.DataFrame.from_dict(data=outParameters, orient='index').to_csv(cvsFilename, header=False)
                         if plotResults:
                             plt.figure(figsize=(10, 6))
-                            plt.plot(np.arange(len(distance)) / 60, velocity)
+                            plt.plot(np.arange(len(distance)) / 60, np.array(distance))
                             plt.xlabel('Time (s)')
                             plt.ylabel('Distance')
                             plt.title('Distance Signal')
