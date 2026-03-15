@@ -860,7 +860,390 @@ def correctBasedonHeightandVelocityNegativePeaks(pos,distance,velocity, minDista
 
     return corrected
 
-def peakFinder(rawSignal, fs=30, minDistance=5, cutOffFrequency=10, prct=0.125):
+def correctBasedonDistanceBetweenPeaks(peaks, distance, velocity, threshold=1.96, fs=60):
+    """
+    Corrects peaks based on the distance between consecutive peaks.
+
+    This function evaluates the distance between consecutive peaks in the input list.
+    We find peaks that are closed than 
+    mean  - threshold * standard deviation / sqrt(len(peaks))
+    and merge them. 
+    Peaks that are further apart than the threshold are retained in the output list.
+
+    Parameters:
+    -----------
+    peaks : list of dict
+        A list of dictionaries where each dictionary represents a peak. Each dictionary
+        must contain the following key:
+        - 'peakIndex' (int): The index of the peak in the signal.
+    distance : list or numpy array
+        A sequence of numerical values representing the signal from which peaks are derived.
+    velocity : list or numpy array
+        A sequence of numerical values representing the velocity associated with the signal.
+    threshold : float, optional (default=2.5)
+        The minimum allowable distance between consecutive peaks. Peaks that are closer
+        than this threshold will be removed.
+    fs : int, optional (default=60)
+        The sampling frequency of the signal, used to convert index differences to time.
+    Returns:
+    --------
+    list of dict
+        A filtered list of dictionaries representing the peaks that meet the distance condition.
+    """
+    # def merge_peak_group(signal, vel, peaks_info, group):
+    #     """
+    #     group: list of indices of peaks to merge, e.g. [7, 8, 9]
+    #     peaks_info: list of dicts, one per peak
+    #     """
+
+    #     # 1) Define the full cycle window for all peaks in this group
+    #     start = min(peaks_info[i]['openingValleyIndex'] for i in group)
+    #     end   = max(peaks_info[i]['closingValleyIndex'] for i in group)
+
+    #     # 2) Recompute main peak index within this window
+    #     seg = signal[start:end+1]
+    #     peak_local = np.argmax(seg)
+    #     peak_idx = start + peak_local
+
+    #     # 3) Now recompute all the other indices within [start, end]
+    #     # Replace these helper calls with your own logic,
+    #     # i.e., whatever you already use for single peaks.
+
+    #     def find_opening_valley(signal, start, peak_idx):
+    #         return start + np.argmin(signal[start:peak_idx+1])
+
+    #     def find_closing_valley(signal, peak_idx, end):
+    #         return peak_idx + np.argmin(signal[peak_idx:end+1])
+
+    #     def find_opening_peak(signal, opening_valley_idx, peak_idx):
+    #         # if you have a more specific definition, plug it here
+    #         return peak_idx   # simplest: use main peak
+
+    #     def find_closing_peak(signal, peak_idx, closing_valley_idx):
+    #         return peak_idx   # same idea
+
+    #     def find_opening_max_speed(vel, opening_valley_idx, peak_idx):
+    #         return opening_valley_idx + np.argmax(vel[opening_valley_idx:peak_idx+1])
+
+    #     def find_closing_max_speed(vel, peak_idx, closing_valley_idx):
+    #         return peak_idx + np.argmin(vel[peak_idx:closing_valley_idx+1])
+
+    #     opening_valley_idx = find_opening_valley(signal, start, peak_idx)
+    #     closing_valley_idx = find_closing_valley(signal, peak_idx, end)
+    #     opening_peak_idx   = find_opening_peak(signal, opening_valley_idx, peak_idx)
+    #     closing_peak_idx   = find_closing_peak(signal, peak_idx, closing_valley_idx)
+    #     opening_max_speed  = find_opening_max_speed(vel, opening_valley_idx, peak_idx)
+    #     closing_max_speed  = find_closing_max_speed(vel, peak_idx, closing_valley_idx)
+
+    #     return {
+    #         'openingPeakIndex': opening_peak_idx,
+    #         'closingPeakIndex': closing_peak_idx,
+    #         'openingValleyIndex': opening_valley_idx,
+    #         'openingMaxSpeedIndex': opening_max_speed,
+    #         'closingValleyIndex': closing_valley_idx,
+    #         'closingMaxSpeedIndex': closing_max_speed,
+    #         'peakIndex': peak_idx,
+    #     }
+    
+    # def merge_peak_group(signal, vel, peaks_info, group):
+    #     # group = list of peak indices to merge, e.g., [7,8,9]
+
+    #     i0, ik = group[0], group[-1]
+    #     first = peaks_info[i0]
+    #     last  = peaks_info[ik]
+
+    #     # --- 1. Fixed boundary values from original peaks ---
+    #     opening_valley_idx = first['openingValleyIndex']
+    #     opening_peak_idx   = first['openingPeakIndex']
+
+    #     closing_peak_idx   = last['closingPeakIndex']
+    #     closing_valley_idx = last['closingValleyIndex']
+
+    #     # --- 2. Recompute main peak inside merged window ---
+    #     seg = signal[opening_valley_idx : closing_valley_idx + 1]
+    #     peak_idx = opening_valley_idx + np.argmax(seg)
+
+    #     # --- 3. Opening max speed (positive phase) ---
+    #     opening_max_speed_idx = (
+    #         opening_valley_idx +
+    #         np.argmax(vel[opening_valley_idx : peak_idx + 1])
+    #     )
+
+    #     # --- 4. Closing max speed (negative phase: take MIN) ---
+    #     closing_max_speed_idx = (
+    #         peak_idx +
+    #         np.argmin(vel[peak_idx : closing_valley_idx + 1])
+    #     )
+
+    #     return {
+    #         'openingPeakIndex': opening_peak_idx,
+    #         'closingPeakIndex': closing_peak_idx,
+    #         'openingValleyIndex': opening_valley_idx,
+    #         'openingMaxSpeedIndex': opening_max_speed_idx,
+    #         'closingValleyIndex': closing_valley_idx,
+    #         'closingMaxSpeedIndex': closing_max_speed_idx,
+    #         'peakIndex': peak_idx
+    #     }
+
+
+    def fit_cycle_poly_index(signal, ov, cv, degree=4, n_grid=200):
+        """
+        Fit a polynomial to signal[ov:cv+1] as function of u in [0,1].
+        Returns u_grid, x_poly(u_grid), v_poly(u_grid).
+        """
+
+        idx_seg = np.arange(ov, cv + 1)
+        x_seg = signal[idx_seg]
+
+        # normalized coordinate u in [0,1]
+        u_seg = (idx_seg - ov) / (cv - ov) if cv > ov else np.zeros_like(idx_seg)
+
+        # fit x(u)
+        coeffs = np.polyfit(u_seg, x_seg, deg=degree)
+
+        # dense grid in u
+        u_grid = np.linspace(0.0, 1.0, n_grid)
+        x_poly = np.polyval(coeffs, u_grid)
+
+        # derivative wrt u (proportional to velocity profile)
+        dcoeffs = np.polyder(coeffs)
+        v_poly = np.polyval(dcoeffs, u_grid)  # derivative wrt u (scale factor irrelevant for argmax/argmin)
+
+        return u_grid, x_poly, v_poly
+
+    
+    def get_poly_landmarks_u(u_grid, x_poly, v_poly):
+        # main peak in smoothed displacement
+        i_peak_u = np.argmax(x_poly)
+        u_peak = u_grid[i_peak_u]
+
+        # opening phase: u <= u_peak
+        open_mask = u_grid <= u_peak
+        v_open = np.copy(v_poly)
+        v_open[~open_mask] = -np.inf
+        i_open_speed = np.argmax(v_open)
+        u_open_speed = u_grid[i_open_speed]
+
+        # closing phase: u >= u_peak
+        close_mask = u_grid >= u_peak
+        v_close = np.copy(v_poly)
+        v_close[~close_mask] = np.inf
+        i_close_speed = np.argmin(v_close)
+        u_close_speed = u_grid[i_close_speed]
+
+        return u_peak, u_open_speed, u_close_speed
+
+    
+    def u_to_index_continuous(u, ov, cv):
+        return ov + u * (cv - ov)  # float index
+    
+    def snap_to_local_extremum(arr, i_est, i_min, i_max, half_window=5, mode="max"):
+        """
+        arr: 1D array (signal or velocity)
+        i_est: estimated index (float)
+        i_min, i_max: hard bounds of the cycle [openingValley, closingValley]
+        half_window: +/- samples around i_est to search
+        mode: "max" or "min"
+        """
+
+        i_center = int(round(i_est))
+        start = max(i_min, i_center - half_window)
+        end   = min(i_max, i_center + half_window)
+
+        if end <= start:
+            return i_center  # fallback
+
+        seg = arr[start:end+1]
+
+        if mode == "max":
+            offset = np.argmax(seg)
+        else:
+            offset = np.argmin(seg)
+
+        return start + offset
+
+    # def merge_peak_group_poly(signal, peaks_info, group, degree=4, n_grid=200):
+    #     """
+    #     Merge all peaks in `group` into a single peak dict using a polynomial model
+    #     between the first opening valley and last closing valley.
+
+    #     signal: 1D displacement array
+    #     peaks_info: list of dicts (your existing peak structures)
+    #     group: list of indices into peaks_info, e.g. [7,8,9]
+    #     """
+
+    #     i0, ik = group[0], group[-1]
+    #     first = peaks_info[i0]
+    #     last  = peaks_info[ik]
+
+    #     # structural boundaries from original peaks
+    #     ov = first['openingValleyIndex']
+    #     cv = last['closingValleyIndex']
+
+    #     # 1) smooth polynomial over [ov, cv]
+    #     u_grid, x_poly, v_poly = fit_cycle_poly_index(signal, ov, cv,
+    #                                                 degree=degree,
+    #                                                 n_grid=n_grid)
+
+    #     # 2) get landmarks in u space
+    #     u_peak, u_open_speed, u_close_speed = get_poly_landmarks_u(u_grid,
+    #                                                             x_poly,
+    #                                                             v_poly)
+
+    #     # 3) map them back to indices in ORIGINAL signal
+    #     peak_idx            = u_to_index(u_peak,        ov, cv)
+    #     opening_max_idx     = u_to_index(u_open_speed,  ov, cv)
+    #     closing_max_idx     = u_to_index(u_close_speed, ov, cv)
+
+    #     # 4) keep original opening/closing peak & valley indices
+    #     opening_peak_idx    = first['openingPeakIndex']
+    #     closing_peak_idx    = last['closingPeakIndex']
+    #     opening_valley_idx  = ov
+    #     closing_valley_idx  = cv
+
+    #     return {
+    #         'openingPeakIndex': opening_peak_idx,
+    #         'closingPeakIndex': closing_peak_idx,
+    #         'openingValleyIndex': opening_valley_idx,
+    #         'openingMaxSpeedIndex': opening_max_idx,
+    #         'closingValleyIndex': closing_valley_idx,
+    #         'closingMaxSpeedIndex': closing_max_idx,
+    #         'peakIndex': peak_idx
+    #     }
+
+
+    def merge_peak_group_poly(signal, vel, peaks_info, group,
+                                  degree=4, n_grid=200, half_window=5):
+        """
+        signal: displacement
+        vel: velocity
+        peaks_info: list of dicts (your peak structures)
+        group: list of peak indices to merge, e.g. [7,8,9]
+        """
+
+        i0, ik = group[0], group[-1]
+        first = peaks_info[i0]
+        last  = peaks_info[ik]
+
+        # Structural boundaries from original annotations
+        ov = first['openingValleyIndex']
+        cv = last['closingValleyIndex']
+
+        # 1) smooth polynomial over [ov, cv]
+        u_grid, x_poly, v_poly = fit_cycle_poly_index(signal, ov, cv,
+                                                    degree=degree,
+                                                    n_grid=n_grid)
+
+        # 2) get polynomial-based landmarks in u
+        u_peak, u_open, u_close = get_poly_landmarks_u(u_grid, x_poly, v_poly)
+
+        # 3) convert to continuous indices in original index space
+        i_peak_est  = u_to_index_continuous(u_peak,  ov, cv)
+        i_open_est  = u_to_index_continuous(u_open,  ov, cv)
+        i_close_est = u_to_index_continuous(u_close, ov, cv)
+
+        # 4) SNAP to best matching extrema in original arrays
+        #    - main peak: max of signal near i_peak_est
+        peak_idx = snap_to_local_extremum(signal, i_peak_est, ov, cv,
+                                        half_window=half_window, mode="max")
+
+        #    - opening max speed: max of vel near i_open_est (and before peak)
+        opening_max_idx = snap_to_local_extremum(
+            vel,
+            min(i_open_est, peak_idx),  # ensure not past the peak
+            ov,
+            peak_idx,
+            half_window=half_window,
+            mode="max",
+        )
+
+        #    - closing max speed: min of vel near i_close_est (and after peak)
+        closing_max_idx = snap_to_local_extremum(
+            vel,
+            max(i_close_est, peak_idx),  # ensure not before the peak
+            peak_idx,
+            cv,
+            half_window=half_window,
+            mode="min",
+        )
+
+        # 5) Keep original opening/closing peak & valley boundaries
+        opening_peak_idx    = first['openingPeakIndex']
+        closing_peak_idx    = last['closingPeakIndex']
+        opening_valley_idx  = ov
+        closing_valley_idx  = cv
+
+        return {
+            'openingPeakIndex': opening_peak_idx,
+            'closingPeakIndex': closing_peak_idx,
+            'openingValleyIndex': opening_valley_idx,
+            'openingMaxSpeedIndex': opening_max_idx,
+            'closingValleyIndex': closing_valley_idx,
+            'closingMaxSpeedIndex': closing_max_idx,
+            'peakIndex': peak_idx
+        }
+
+
+    def merge_all_peaks(signal, vel, peaks_info, merge_groups,fs):
+        merged_peaks = []
+        merged_indices = set(i for g in merge_groups for i in g)
+
+        # 1) merge grouped peaks
+        for g in merge_groups:
+            t = np.arange(len(signal)) / fs
+            merged_peaks.append(merge_peak_group_poly(signal, vel, peaks_info, g))
+
+        # 2) keep all peaks that are not in any merge group
+        for i, p in enumerate(peaks_info):
+            if i not in merged_indices:
+                merged_peaks.append(p)
+
+        # Optional: sort by peakIndex or time
+        merged_peaks.sort(key=lambda d: d['peakIndex'])
+
+        return merged_peaks
+    
+
+    peaktimesdifferences =[]
+    for i in range(len(peaks)-1):
+        peaktimesdifferences.append(peaks[i+1]['peakIndex'] - peaks[i]['peakIndex'])
+
+    # only do this procedure if the is large peak variability, if not, then just return original peaks
+    # coefficient of variation
+    # print('CoV of peak time differences:', np.std(peaktimesdifferences) / np.mean(peaktimesdifferences))
+
+    if (np.std(peaktimesdifferences) / np.mean(peaktimesdifferences)) < 0.3:
+        return peaks    
+    else:
+        lowPeakTime = np.mean(peaktimesdifferences) - threshold * (np.std(peaktimesdifferences)/np.sqrt(len(peaktimesdifferences)))
+        merge_groups = []
+        current_group = []
+
+        for i in range(len(peaktimesdifferences)):
+            if peaktimesdifferences[i] < lowPeakTime:
+                # these two peaks belong to same merge group
+                if not current_group:
+                    current_group = [i, i+1]
+                else:
+                    current_group.append(i+1)
+            else:
+                if current_group:
+                    merge_groups.append(current_group)
+                    current_group = []
+
+        # append last group if still open
+        if current_group:
+            merge_groups.append(current_group)
+
+        new_peaks = merge_all_peaks(distance, velocity, peaks, merge_groups,fs)
+
+        return new_peaks
+
+
+
+
+
+def peakFinder(rawSignal, fs=30.0, minDistance=5, cutOffFrequency=10.0, prct=0.125):
     """
     Identifies positive and negative velocity peaks in a raw signal and applies corrections 
     to refine the detected peaks based on various criteria.
@@ -926,7 +1309,7 @@ def peakFinder(rawSignal, fs=30, minDistance=5, cutOffFrequency=10, prct=0.125):
     b, a = signal.butter(2, cutOffFrequency, fs=fs, btype='low', analog=False)
 
     distance = signal.filtfilt(b, a, rawSignal)  # signal.savgol_filter(rawDistance[0], 5, 3, deriv=0)
-    velocity = signal.savgol_filter(distance, 5, 3, deriv=1) / (1 / fs)
+    velocity = signal.savgol_filter(distance, 9, 3, deriv=1) / (1 / fs)
     ##approx mean frequency
     # acorr = np.convolve(rawSignal, rawSignal)
     acorr = np.convolve(distance, distance)
@@ -937,10 +1320,10 @@ def peakFinder(rawSignal, fs=30, minDistance=5, cutOffFrequency=10, prct=0.125):
     deriv[deriv < 0] = 0
     deriv = deriv ** 2
 
-    peaks, props = signal.find_peaks(deriv, distance=sep)
+    allPeaks, props = signal.find_peaks(deriv, distance=sep)
 
-    heightPeaksPositive = deriv[peaks]
-    selectedPeaksPositive = peaks[heightPeaksPositive > prct * np.mean(heightPeaksPositive)]
+    heightPeaksPositive = deriv[allPeaks]
+    selectedPeaksPositive = allPeaks[heightPeaksPositive > prct * np.mean(heightPeaksPositive)]
 
     # for each max opening vel, identify the peaks and valleys
     for idx, peak in enumerate(selectedPeaksPositive):
@@ -973,30 +1356,36 @@ def peakFinder(rawSignal, fs=30, minDistance=5, cutOffFrequency=10, prct=0.125):
     deriv = velocity.copy()
     deriv[deriv > 0] = 0
     deriv = deriv ** 2
-    peaks, props = signal.find_peaks(deriv, distance=sep)
+    AllPeaks, props = signal.find_peaks(deriv, distance=sep)
 
-    heightPeaksNegative = deriv[peaks]
-    selectedPeaksNegative = peaks[heightPeaksNegative > prct * np.mean(heightPeaksNegative)]
+    heightPeaksNegative = deriv[AllPeaks]
+    selectedPeaksNegative = AllPeaks[heightPeaksNegative > prct * np.mean(heightPeaksNegative)]
 
     # for each max opening vel, identify the peaks and valleys
     for idx, peak in enumerate(selectedPeaksNegative):
 
+        # Find the peak index for the negative velocity segment
+        # Start searching to the left of the detected velocity peak (peak - 1)
         idxPeak = peak - 1
         if idxPeak >= 0:
+            # Move left until you find where the velocity is zero (end of negative segment)
             while deriv[idxPeak] != 0:
                 if idxPeak <= 0:
+                    # If you reach the start of the signal, set idxPeak to NaN and break
                     idxPeak = np.nan
                     break
-
                 idxPeak -= 1
 
+        # Find the valley index for the negative velocity segment
+        # Start searching to the right of the detected velocity peak (peak + 1)
         idxValley = peak + 1
         if idxValley < len(deriv):
+            # Move right until you find where the velocity is zero (end of negative segment)
             while deriv[idxValley] != 0:
                 if idxValley >= len(deriv) - 1:
+                    # If you reach the end of the signal, set idxValley to NaN and break
                     idxValley = np.nan
                     break
-
                 idxValley += 1
 
         if (not (np.isnan(idxPeak)) and not (np.isnan(idxValley))):
@@ -1043,6 +1432,7 @@ def peakFinder(rawSignal, fs=30, minDistance=5, cutOffFrequency=10, prct=0.125):
     # indexNegativeVelocity = correctBasedonVelocityNegative(indexNegativeVelocity, velocity.copy())
     
     peaks = correctFullPeaks(distance, indexPositiveVelocity, indexNegativeVelocity)
+    peaks = correctBasedonDistanceBetweenPeaks(peaks, distance, velocity, threshold=1.96, fs=fs)
     peaks = correctHeadsandTails(peaks)
     peaks = correctBasedonPeakSymmetry(peaks)
     peaks = correctBasedonHeightSymmetry(peaks, distance)
@@ -1052,3 +1442,4 @@ def peakFinder(rawSignal, fs=30, minDistance=5, cutOffFrequency=10, prct=0.125):
     
 
     return distance, velocity, peaks, indexPositiveVelocity, indexNegativeVelocity
+# 

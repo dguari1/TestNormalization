@@ -4,3 +4,10 @@ dataVNDB/
 output/
 json/
 GoodqQualityJSONFiles/
+FT/
+FT_update/
+output-FT_JSONDatnik/
+output-FT_JSONDatnik-update/
+output-FT_JSONDatnik-update3/
+test/
+

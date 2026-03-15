@@ -1,5 +1,6 @@
 import os
 import json
+from turtle import speed
 import numpy as np
 import math
 import scipy.interpolate as interpolate
@@ -33,6 +34,86 @@ PINKY_MCP = 17
 PINKY_PIP = 18
 PINKY_DIP = 19
 PINKY_TIP = 20
+
+def ProcessCustomPeaks(up_sample_signal,time,start_time,peaks,valleys_start,valleys_end,fs=60, cutOffFrequency=10): 
+
+    b, a = signal.butter(2, cutOffFrequency, fs=fs, btype='low', analog=False)
+    distance = signal.filtfilt(b, a, up_sample_signal)  
+    velocity = signal.savgol_filter(distance, 9, 3, deriv=1) / (1 / fs)
+
+    informationPeaks = []
+    for vs, ve, p in zip(valleys_start['time'], valleys_end['time'], peaks['time']):
+
+        #adjust time 
+        vs = vs - start_time
+        ve = ve - start_time
+        p = p - start_time
+
+        #find the index of the peak and valleys
+        openingValleyIndex = np.argmin(np.abs(time - vs))-1
+        closingValleyIndex = np.argmin(np.abs(time - ve))+1
+        peakIndex = np.argmin(np.abs(time - p))
+
+        #find the opening peak index by moving right from the opening valley until you find where the velocity is zero (end of positive segment)
+        deriv = velocity.copy()
+        deriv[deriv < 0] = 0
+        deriv = deriv ** 2
+
+        #get the max speed point between opening valley and peak
+        openingMaxSpeedIndex = (openingValleyIndex-1) + np.argmax(deriv[openingValleyIndex-1:peakIndex])
+
+
+        idxPeak = openingMaxSpeedIndex + 1
+
+        if idxPeak < len(deriv):
+            while deriv[idxPeak] != 0:
+                if idxPeak >= len(deriv) - 1:
+                    idxPeak = np.nan
+                    break
+
+                idxPeak += 1
+
+        openingPeakIndex = idxPeak
+
+
+        #find the closing peak index by moving left from the closing valley until you find where the velocity is zero (end of negative segment)
+        deriv = velocity.copy()
+        deriv[deriv > 0] = 0
+        deriv = deriv ** 2
+
+
+
+        closingMaxSpeedIndex = (peakIndex) + np.argmax(deriv[peakIndex:closingValleyIndex+1])
+
+        idxPeak = closingMaxSpeedIndex - 1
+        if idxPeak >= 0:
+            # Move left until you find where the velocity is zero (end of negative segment)
+            while deriv[idxPeak] != 0:
+                if idxPeak <= 0:
+                    # If you reach the start of the signal, set idxPeak to NaN and break
+                    idxPeak = np.nan
+                    break
+                idxPeak -= 1
+
+        closingPeakIndex = idxPeak
+
+        
+
+
+        #put all this information together in a dictionary
+        peakInfo = {
+                'openingPeakIndex': openingPeakIndex ,
+                'closingPeakIndex': closingPeakIndex ,
+                'openingValleyIndex': openingValleyIndex,
+                'openingMaxSpeedIndex': openingMaxSpeedIndex,
+                'closingValleyIndex': closingValleyIndex,
+                'closingMaxSpeedIndex': closingMaxSpeedIndex,
+                'peakIndex': peakIndex,
+                }
+        
+        informationPeaks.append(peakInfo)
+
+    return distance, velocity, informationPeaks
 
 def decayEstimation(Peaks, nSelectedPeaks=4):
     slope, b = np.polyfit(np.arange(len(Peaks)), Peaks, 1)
@@ -143,11 +224,266 @@ def scaling(landmarks, scale='THUMBSIZE'):
         scalingFactor = np.max(median_filter(prevScale, 3)) / np.max(median_filter(newScale, 3))
         return scalingFactor, scale  # Return scaling factor and scaling method
 
-def get_output(up_sample_signal):
-    fs = 60
-    distance, velocity, peaks, indexPositiveVelocity, indexNegativeVelocity = peakFinder(
-        up_sample_signal, fs=fs, minDistance=3, cutOffFrequency=7.5, prct=0.05
-    )
+def _theil_sen_slope(x, y):
+    """
+    Robust slope estimate: median of all pairwise slopes (Theil–Sen).
+    Returns np.nan if <2 valid points.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    m = np.isfinite(x) & np.isfinite(y)
+    x, y = x[m], y[m]
+    n = len(x)
+    if n < 2:
+        return np.nan
+
+    slopes = []
+    for i in range(n - 1):
+        dx = x[i+1:] - x[i]
+        dy = y[i+1:] - y[i]
+        valid = dx != 0
+        if np.any(valid):
+            slopes.extend((dy[valid] / dx[valid]).tolist())
+
+    return float(np.nanmedian(slopes)) if len(slopes) else np.nan
+
+def _robust_median(s): 
+    return float(np.nanmedian(s.values)) if len(s)>= 2 else np.nan
+
+def _robust_std(s):
+    return float(np.nanstd(s, ddof=1)) if len(s) >= 2 else np.nan
+
+def _cv(s):
+    v = s.values.astype(float)
+    v = v[np.isfinite(v)]
+    if len(v) < 2:
+        return np.nan
+    mu = np.mean(v)
+    return float(np.std(v, ddof=1) / mu) if mu != 0 else np.nan
+
+def compute_measures_per_cycle(peaks, distance, velocity, fs):
+    """
+    Docstring for compute_measures_per_cycle
+    
+    :param up_sample_signal: input signal
+
+    Compute measures per cycle 
+    """
+    x = np.asarray(distance, dtype=float)
+    v = np.asarray(velocity, dtype=float)
+    maxVelocity = v.max()
+    velocityThreshold = maxVelocity * 0.5
+
+    rows = []
+
+    for i, d in enumerate(peaks, start = 0):
+
+        ov  = int(d["openingValleyIndex"])
+        p   = int(d["peakIndex"])
+        cv  = int(d["closingValleyIndex"])
+        oms = int(d["openingMaxSpeedIndex"])
+        cms = int(d["closingMaxSpeedIndex"])
+
+        # Guard against bad ordering / indices
+        if not (0 <= ov < len(x) and 0 <= p < len(x) and 0 <= cv < len(x)
+                and 0 <= oms < len(x) and 0 <= cms < len(x)):
+            continue
+        if not (ov < p < cv):
+            continue
+        if not (ov <= oms <= p):
+            # still compute but cap within segment
+            oms = min(max(oms, ov), p)
+        if not (p <= cms <= cv):
+            cms = min(max(cms, p), cv)
+
+        x_ov, x_p, x_cv = x[ov], x[p], x[cv]
+        v_ov, v_p, v_cv = v[ov], v[p], v[cv]
+
+        #amplitude, average opening valley to peak and closing valley to peak
+        openingAmplitude = (x_p - x_ov)
+        openingDuration = (p-ov) / fs
+        closingAmplitude = (x_p - x_cv)
+        closingDuration = (cv-p)/fs
+        
+        cycleAmplitude = (openingAmplitude + closingAmplitude)/2
+
+        movementDuration = (cv-ov)/fs
+        cycleSpeed = cycleAmplitude / movementDuration if movementDuration>0 else np.nan
+        openingSpeed = openingAmplitude / openingDuration if openingDuration>0 else np.nan
+        closingSpeed = closingAmplitude / closingDuration if closingDuration>0 else np.nan
+
+        RMSvelocity = np.sqrt(np.mean(v[ov:cv] ** 2))
+
+        openingSpeedMax = abs(v[oms])
+        closingSpeedMax = abs(v[cms])
+
+        #check is there are hesitations within the cycle 
+        # calculate hesitations in the openeing-closing movement sequences 
+        abs_velocity_segment = np.abs(v[ov+1:cv-1])
+        # Count the number of times the absolute value of velocity crosses the threshold defined by maxVelocity*0.25
+        crossingsDuringOpeningClosingMovement = np.sum((abs_velocity_segment[:-1] < velocityThreshold) & (abs_velocity_segment[1:] >= velocityThreshold)) + \
+                    np.sum((abs_velocity_segment[:-1] >= velocityThreshold) & (abs_velocity_segment[1:] < velocityThreshold))
+        
+
+        cycleDuration = np.nan
+        crossingsDuringPause = 0
+        if i < (len(peaks) - 1): #don't do it for the last cycle
+            ov_nextValley  = int(peaks[i+1]["openingValleyIndex"])
+            cycleDuration = (ov_nextValley - ov) / fs #get the cycle duration, including from the opening vally of the current cycle until the opening valley of the following cycle
+
+            #calculate hesitations in the pause between cycles
+            pauseDuration = ((ov_nextValley) - cv) / fs
+            if pauseDuration > 0.2 : #only consider pauses longer than 0.2 seconds 
+                abs_velocity_segment = np.abs(v[cv:ov_nextValley-1])
+                # Count the number of times the absolute value of velocity crosses the threshold defined by maxVelocity*velocityThreshold
+                crossingsDuringPause = np.sum((abs_velocity_segment[:-1] < velocityThreshold) & (abs_velocity_segment[1:] >= velocityThreshold)) + \
+                            np.sum((abs_velocity_segment[:-1] >= velocityThreshold) & (abs_velocity_segment[1:] < velocityThreshold))
+                
+        if crossingsDuringOpeningClosingMovement > 4 or  crossingsDuringPause > 4:
+            hesitations = 1
+        else:
+            hesitations = 0
+
+        rows.append({
+            "cycle": i+1,
+            "ov_idx": ov, "p_idx": p, "cv_idx": cv, "oms_idx": oms, "cms_idx": cms,
+            "t_ov": ov / fs, "t_p": p / fs, "t_cv": cv / fs, "t_oms": oms / fs, "t_cms": cms / fs,
+            "x_ov": x_ov, "x_p": x_p, "x_cv": x_cv,
+            "v_ov": v_ov, "v_p": v_p, "v_cv": v_cv,
+            "amplitude": cycleAmplitude,
+            "duration": movementDuration,#cycleDuration,
+            "speed": cycleSpeed,
+            "RMSvelocity": RMSvelocity,
+            "openingSpeed": openingSpeed,
+            "closigSpeed": closingSpeed,
+            "openingSpeedMax": openingSpeedMax,
+            "closingSpeedMax": closingSpeedMax,
+            "hesitations": hesitations,
+            "totalDuration": cycleDuration,
+        })
+
+    return pd.DataFrame(rows)
+
+def get_outputUpdated(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 'all'):
+   
+    if peaks is None or velocity is None:
+        fs = 60 if fs is None else fs
+        distance, velocity, peaks, indexPositiveVelocity, indexNegativeVelocity = peakFinder(
+            distance, fs=fs, minDistance=3, cutOffFrequency=7.5, prct=0.05
+        )
+
+    Npeaks = len(peaks)
+    if desiredPeaks != 'all':
+        #try to get a number from desiredPeaks and if it is a valid number and less than the number of peaks, use it to select the first desiredPeaks peaks
+        try:    
+            desiredPeaks = int(desiredPeaks)
+            if desiredPeaks <= Npeaks+1:
+                peaks = peaks[:desiredPeaks]
+                Npeaks = len(peaks)
+        except:
+            print(f"desiredPeaks should be 'all' or an string representing an integer")
+
+
+    cycles = compute_measures_per_cycle(peaks, distance, velocity, fs)
+
+    feats = {}
+    cycleDuration = cycles["duration"].dropna()
+    
+    # --- Slowness --- 
+    feats["MedianSpeed"] =  _robust_median(cycles["speed"])
+    feats["MedianRMSVelocity"] = _robust_median(cycles["RMSvelocity"])
+    # feats["MedianClosingSpeed"] = _robust_median(cycles["closigSpeed"])
+    # feats["MedianOpeningSpeed"] = _robust_median(cycles["openingSpeed"])
+    feats["MedianMaxClosingSpeed"] = _robust_median(cycles["closingSpeedMax"])
+    feats["MedianMaxOpeningSpeed"] = _robust_median(cycles["openingSpeedMax"])
+
+    feats["MedianCycleDuration"] = _robust_median(cycleDuration)
+    # feats["frequency"] = len(cycles["totalDuration"].dropna())/cycles["totalDuration"].sum() # (1.0 / feats["MedianCycleDuration"]) if np.isfinite(feats["MedianCycleDuration"]) and feats["MedianCycleDuration"] > 0 else np.nan
+    feats["RangeCycleDuration"] = (cycleDuration.max() - cycleDuration.min()) if len(cycleDuration) >= 2 else np.nan
+    
+    # --- Hypokinesia ---
+    feats["MedianAmplitude"] = _robust_median(cycles["amplitude"])
+
+
+    # --- Sequence effect / decay  ---
+    
+    # idx = cycles["cycle"].values.astype(float)
+    # feats["SlopeAmplitude"] = _theil_sen_slope(idx, cycles["amplitude"].values.astype(float))    
+    # feats["SlopeSpeed"] = _theil_sen_slope(idx, cycles["speed"].values.astype(float))
+    # # slope of cycle duration (cycle_time exists only for first N-1)
+    # if len(cycleDuration) >= 2:
+    #     idx_ct = cycles.loc[cycleDuration.index, "cycle"].values.astype(float)
+    #     feats["SlopeCycleDuration"] = _theil_sen_slope(idx_ct, cycleDuration.values.astype(float))
+    # else:
+    #     feats["SlopeCycleDuration"] = np.nan
+
+    amplitudeDecay = 1.0
+    velocityDecay = 1.0
+    timeDecay = 1.0
+
+    # Check if there are enough peaks to compute decay parameters
+    if len(cycles) >= 3:
+        n = len(cycles) // 3 # Split the peaks into 3 parts
+        if n == 0:
+            n = 1  # Ensure at least one peak is selected
+
+        earlyCycles = cycles.iloc[:n]
+        lateCycles = cycles.iloc[-n:]
+
+        # Ensure earlyPeaks and latePeaks are not empty
+        if earlyCycles is not None and lateCycles is not None and len(earlyCycles) > 0 and len(lateCycles) > 0:
+     
+            # Amplitude Decay
+            earlyAmplitude = _robust_median(earlyCycles["amplitude"])
+            lateAmplitude = _robust_median(lateCycles["amplitude"])
+            if np.mean(lateAmplitude) != 0:
+                amplitudeDecay = earlyAmplitude / lateAmplitude
+            else:
+                amplitudeDecay = np.nan
+
+            # Velocity Decay
+            earlySpeed = _robust_median(earlyCycles["speed"])
+            lateSpeed = _robust_median(lateCycles["speed"])
+            if np.mean(lateSpeed) != 0:
+                velocityDecay = earlySpeed / lateSpeed
+            else:
+                velocityDecay = np.nan
+
+            #time decay 
+            earlyCycleDuration = _robust_median(earlyCycles["duration"])
+            lateCycleDuration = _robust_median(lateCycles["duration"])
+            if np.mean(lateCycleDuration) != 0:
+                timeDecay = earlyCycleDuration / lateCycleDuration
+            else:
+                timeDecay = np.nan
+
+    feats["AmplitudeDecay"] = abs(1-amplitudeDecay)   
+    feats["SpeedDecay"] = abs(1-velocityDecay) 
+    feats["CycleDurationDecay"] = abs(1-timeDecay)     
+
+    # --- Irregularity / hesitations / halts  ---
+    feats["CVAmplitude"] = _cv(cycles["amplitude"])#_robust_std(cycles["amplitude"]) 
+    feats["CVSpeed"] = _cv((cycles["speed"]))#_robust_std(cycles["speed"])
+    feats["CVRMSVelocity"] = _cv(cycles["RMSvelocity"])
+    feats["CVCycleDuration"] = _cv(cycleDuration)
+    feats["CVMaxClosingSpeed"] = _cv(cycles["closingSpeedMax"])    
+    feats["CVMaxOpeningSpeed"] = _cv(cycles["openingSpeedMax"])
+    feats["NumberHesitations"] = int(cycles["hesitations"].sum())
+    if len(cycleDuration) >= 2:
+        feats["NumberPauses"] = int(((cycles["duration"] > 2 * feats["MedianCycleDuration"]).sum()) if np.isfinite(feats["MedianCycleDuration"]) else 0)
+    else:
+        feats["NumberPauses"] = 0
+
+    return feats, distance, velocity
+
+def get_output(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 'all'):
+
+    if peaks is None or velocity is None:
+        fs = 60 if fs is None else fs
+        distance, velocity, peaks, indexPositiveVelocity, indexNegativeVelocity = peakFinder(
+            distance, fs=fs, minDistance=3, cutOffFrequency=7.5, prct=0.05
+        )
 
     amplitude = []
     peakTime = []
@@ -161,11 +497,21 @@ def get_output(up_sample_signal):
     pauseDuration = []
     hesitationsinMovement = []
     hesitationsinPause = []
-   
 
+    #check if the subjects wans to use certain number of peaks 
     Npeaks = len(peaks)
-    maxVelocity = np.max(velocity)
+    if desiredPeaks != 'all':
+        #try to get a number from desiredPeaks and if it is a valid number and less than the number of peaks, use it to select the first desiredPeaks peaks
+        try:    
+            desiredPeaks = int(desiredPeaks)
+            if desiredPeaks <= Npeaks+1:
+                peaks = peaks[:desiredPeaks]
+                Npeaks = len(peaks)
+        except:
+            print(f"desiredPeaks should be 'all' or an string representing an integer")
 
+
+    maxVelocity = np.max(velocity)
     for idx, peak in enumerate(peaks):
 
         #for some reason, the peakFinder function does not return the opening and closing Peak Index
@@ -409,23 +755,27 @@ def main():
     parser = argparse.ArgumentParser(description="Process input and output folders and scaling method.")
     parser.add_argument("--inputFolder", type=str, required=True, help="Path to the input folder containing JSON files.")
     parser.add_argument("--outputFolder", type=str, required=True, help="Path to the output folder for results.")
-    parser.add_argument("--scalingMethod", type=str, required=True, choices=['THUMBSIZE', 'INDEXSIZE', 'PALMSIZE', 'NOSCALING'], help="Scaling method to use.")
+    parser.add_argument("--scalingMethod", type=str, required=False, default='NOSCALING', choices=['THUMBSIZE', 'INDEXSIZE', 'PALMSIZE', 'NOSCALING'], help="Scaling method to use.")
+    parser.add_argument("--estimatePeaks", type=bool, required=False, default=False, choices=[True,False], help="Estimate peaks if not provided in the JSON file.")
+    parser.add_argument("--desiredPeaks", type=str, required=False, default="all",  help="Number of peaks to use during estimation")
+    parser.add_argument("--plotResults", type=bool, required=False, default=True, choices=[True,False],  help="Plot resulting signal")
+    parser.add_argument("--featuresEstimator", type=str, required=False, default="default", choices=["default", "new"], help="Feature estimator to use")
     args = parser.parse_args()
 
     inputFolder = args.inputFolder
     outputFolder = args.outputFolder
     scalingMethod = args.scalingMethod
-    # inputFolder = 'GoodQualityJSONFiles'
-    # outputFolder = 'output'  # Ensure this folder exists
-    # scalingMethod = 'THUMBSIZE'  # You can change this as needed
-    #                              #avaliable options are 'THUMBSIZE', 'INDEXSIZE', 'NOSCALING'
-    #                              #'NOSCALING' will preserve the original scaling method (hand size)
-    
-    # inputFolder = "/Users/diegoguarin/Documents/Github/TimeSeriesClassification/test"
-    # outputFolder = "/Users/diegoguarin/Documents/Github/TimeSeriesClassification/allFillesCON_THUMB"
-    # scalingMethod = 'THUMBSIZE'
-    plotResults = True
+    estimatePeaks = args.estimatePeaks
+    desiredPeaks = args.desiredPeaks
+    plotResults = args.plotResults
+    featuresEstimator = args.featuresEstimator
+    if featuresEstimator == 'default':
+        estimator = get_output
+    else:
+        estimator = get_outputUpdated
+
     listFiles = os.listdir(inputFolder)
+
 
     # Ensure the output directory exists
     if not os.path.exists(outputFolder):
@@ -470,14 +820,25 @@ def main():
                     up_sample_signal = signal.resample(np.array(linePlotData), len(time_vector))
                     # Compute scaling factor
                     if scalingMethod == 'NOSCALING':
-                        outParameters, distance, velocity = get_output(up_sample_signal)
+                        # outParameters, distance, velocity = get_outputUpdated(up_sample_signal)
+                        if estimatePeaks == True:
+                            outParameters, distance, velocity = estimator(up_sample_signal, desiredPeaks = desiredPeaks)
+                        else:
+                            distance, velocity, peaks = ProcessCustomPeaks(up_sample_signal,time_vector, start_time, data['peaks'], data['valleys_start'], data['valleys_end'], fs=60, cutOffFrequency=7.5)
+                            outParameters, distance, velocity = estimator(distance, velocity, peaks, fs=60, desiredPeaks = desiredPeaks)
+
                         actualScalingMethod = 'NOSCALING'
                     else:
                         scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod)
-                        
                         # Scale signal and recompute parameters
+                        # outParameters, distance, velocity = get_outputUpdated(up_sample_signal * scalingFactor)
+                        if estimatePeaks == True:
+                            outParameters, distance, velocity = estimator(up_sample_signal * scalingFactor, desiredPeaks = desiredPeaks)
+                        else:
+                            distance, velocity, peaks = ProcessCustomPeaks(up_sample_signal * scalingFactor,time_vector, start_time, data['peaks'], data['valleys_start'], data['valleys_end'], fs=60, cutOffFrequency=7.5)
+                            outParameters, distance, velocity = estimator(distance , velocity, peaks, fs=60, desiredPeaks = desiredPeaks)
 
-                        outParameters, distance, velocity = get_output(up_sample_signal * scalingFactor)
+
        
                     if outParameters is not None:
                         # Save to CSV
@@ -485,7 +846,7 @@ def main():
                         pd.DataFrame.from_dict(data=outParameters, orient='index').to_csv(cvsFilename, header=False)
                         if plotResults:
                             plt.figure(figsize=(10, 6))
-                            plt.plot(np.arange(len(distance)) / 60, distance)
+                            plt.plot(np.arange(len(distance)) / 60, velocity)
                             plt.xlabel('Time (s)')
                             plt.ylabel('Distance')
                             plt.title('Distance Signal')
@@ -497,9 +858,10 @@ def main():
                         print(f"Skipping file {file} due to insufficient data.")
                 except Exception as e:
                     print(f"Error processing file {file}: {e}")
+                    
                     if plotResults:
                             plt.figure(figsize=(10, 6))
-                            plt.plot(np.arange(len(np.array(linePlotData))) / 60, np.array(linePlotData))
+                            plt.plot(linePlotData, linePlotData)
                             plt.xlabel('Time (s)')
                             plt.ylabel('Distance')
                             plt.title('Distance Signal')
