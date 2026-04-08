@@ -4,6 +4,7 @@ from turtle import speed
 import numpy as np
 import math
 import scipy.interpolate as interpolate
+from scipy.ndimage import gaussian_filter1d
 from scipy import signal
 from scipy.ndimage import median_filter
 import matplotlib.pyplot as plt
@@ -147,9 +148,10 @@ def decayEstimation(Peaks, nSelectedPeaks=4):
     else:
         return 0
 
-def scaling(landmarks, scale='THUMBSIZE'):
+def scaling(landmarks, scale='THUMBSIZE', normalization_factor = None, rawSignalOriginal = None):
     prevScale = []
     newScale = []
+    rawSignalEstimated = []
 
     for idx, landmark in enumerate(landmarks):
         if len(landmark) > 0:
@@ -165,6 +167,11 @@ def scaling(landmarks, scale='THUMBSIZE'):
                 except Exception as e:
                     print(f"Error computing distance for frame {idx}: {e}")
                     continue  # Skip this frame
+
+                if normalization_factor is None:
+                    #we were not provided a normalization factor, so we will use recompute the distance in pixels and use the output of VisionMD to get an idea of the normalization factor used originally. 
+                    dist = math.dist(landmark[INDEX_FINGER_TIP], landmark[THUMB_TIP])
+                    rawSignalEstimated.append(dist)
 
                 #if new scaling mehthod is selected, compute the new scaling method
                 if scale == 'THUMBSIZE':
@@ -246,7 +253,16 @@ def scaling(landmarks, scale='THUMBSIZE'):
     else:
         # Divide the new scaling method by the original scaling method
         # to get the scaling factor
-        scalingFactor = np.max(median_filter(prevScale, 3)) / np.max(median_filter(newScale, 3))
+        if normalization_factor is not None:
+            scalingFactor = normalization_factor / np.max(median_filter(newScale, 3))
+        else:
+            if rawSignalOriginal is not None and len(rawSignalEstimated)>0:
+                estimatedPrevScale = np.mean(rawSignalEstimated) / np.mean(rawSignalOriginal)
+                scalingFactor = estimatedPrevScale / np.max(median_filter(newScale, 3))
+            else:
+                scalingFactor = 1
+                scale = 'NOSCALING'
+        
         return scalingFactor, scale  # Return scaling factor and scaling method
 
 def _theil_sen_slope(x, y):
@@ -279,6 +295,9 @@ def _robust_median(s):
 def _robust_std(s):
     return float(np.nanstd(s, ddof=1)) if len(s) >= 2 else np.nan
 
+def _robust_mean(s):
+    return float(np.nanmean(s.values)) if len(s) >= 2 else np.nan
+
 def _cv(s):
     v = s.values.astype(float)
     v = v[np.isfinite(v)]
@@ -302,6 +321,12 @@ def compute_measures_per_cycle(peaks, distance, velocity, fs):
 
     rows = []
 
+    #we need to do a first pass and ensure the peaks are in order
+    peaks = sorted(peaks, key=lambda k: k['openingValleyIndex'])
+    #we only keep peaks where the closing valley is after the opening valley and the peak is between the opening and closing valley
+    peaks = [peak for peak in peaks if peak['closingValleyIndex'] > peak['openingValleyIndex'] and peak['peakIndex'] > peak['openingValleyIndex'] and peak['peakIndex'] < peak['closingValleyIndex']]
+
+    #now we can process the data
     for i, d in enumerate(peaks, start = 0):
 
         ov  = int(d["openingValleyIndex"])
@@ -355,12 +380,12 @@ def compute_measures_per_cycle(peaks, distance, velocity, fs):
         crossingsDuringPause = 0
         if i < (len(peaks) - 1): #don't do it for the last cycle
             ov_nextValley  = int(peaks[i+1]["openingValleyIndex"])
-            cycleDuration = (ov_nextValley - ov) / fs #get the cycle duration, including from the opening vally of the current cycle until the opening valley of the following cycle
+            cycleDuration = ((ov_nextValley) - ov) / fs #get the cycle duration, including from the opening vally of the current cycle until the opening valley (-1) of the following cycle
 
             #calculate hesitations in the pause between cycles
             pauseDuration = ((ov_nextValley) - cv) / fs
             if pauseDuration > 0.2 : #only consider pauses longer than 0.2 seconds 
-                abs_velocity_segment = np.abs(v[cv:ov_nextValley-1])
+                abs_velocity_segment = np.abs(v[cv:ov_nextValley])
                 # Count the number of times the absolute value of velocity crosses the threshold defined by maxVelocity*velocityThreshold
                 crossingsDuringPause = np.sum((abs_velocity_segment[:-1] < velocityThreshold) & (abs_velocity_segment[1:] >= velocityThreshold)) + \
                             np.sum((abs_velocity_segment[:-1] >= velocityThreshold) & (abs_velocity_segment[1:] < velocityThreshold))
@@ -381,7 +406,7 @@ def compute_measures_per_cycle(peaks, distance, velocity, fs):
             "speed": cycleSpeed,
             "RMSvelocity": RMSvelocity,
             "openingSpeed": openingSpeed,
-            "closigSpeed": closingSpeed,
+            "closingSpeed": closingSpeed,
             "openingSpeedMax": openingSpeedMax,
             "closingSpeedMax": closingSpeedMax,
             "hesitations": hesitations,
@@ -413,22 +438,22 @@ def get_outputUpdated(distance, velocity = None, peaks = None, fs=None, desiredP
     cycles = compute_measures_per_cycle(peaks, distance, velocity, fs)
 
     feats = {}
-    cycleDuration = cycles["duration"].dropna()
+    cycleDuration = cycles["totalDuration"].dropna() #cycles["duration"].dropna()
     
     # --- Slowness --- 
-    feats["MedianSpeed"] =  _robust_median(cycles["speed"])
-    feats["MedianRMSVelocity"] = _robust_median(cycles["RMSvelocity"])
+    feats["MeanSpeed"] = _robust_mean(cycles["speed"])#  _robust_median(cycles["speed"])
+    feats["MeanRMSVelocity"] = _robust_mean(cycles["RMSvelocity"])
     # feats["MedianClosingSpeed"] = _robust_median(cycles["closigSpeed"])
     # feats["MedianOpeningSpeed"] = _robust_median(cycles["openingSpeed"])
-    feats["MedianMaxClosingSpeed"] = _robust_median(cycles["closingSpeedMax"])
-    feats["MedianMaxOpeningSpeed"] = _robust_median(cycles["openingSpeedMax"])
+    feats["MeanMaxClosingSpeed"] = _robust_mean(cycles["closingSpeedMax"])
+    feats["MeanMaxOpeningSpeed"] = _robust_mean(cycles["openingSpeedMax"])
 
-    feats["MedianCycleDuration"] = _robust_median(cycleDuration)
-    # feats["frequency"] = len(cycles["totalDuration"].dropna())/cycles["totalDuration"].sum() # (1.0 / feats["MedianCycleDuration"]) if np.isfinite(feats["MedianCycleDuration"]) and feats["MedianCycleDuration"] > 0 else np.nan
+    feats["MeanCycleDuration"] = _robust_mean(cycleDuration)
+    feats["frequency"] = len(cycles["totalDuration"].dropna())/cycles["totalDuration"].sum() # (1.0 / feats["MeanCycleDuration"]) if np.isfinite(feats["MeanCycleDuration"]) and feats["MeanCycleDuration"] > 0 else np.nan
     feats["RangeCycleDuration"] = (cycleDuration.max() - cycleDuration.min()) if len(cycleDuration) >= 2 else np.nan
     
     # --- Hypokinesia ---
-    feats["MedianAmplitude"] = _robust_median(cycles["amplitude"])
+    feats["MeanAmplitude"] = _robust_mean(cycles["amplitude"])
 
 
     # --- Sequence effect / decay  ---
@@ -460,24 +485,24 @@ def get_outputUpdated(distance, velocity = None, peaks = None, fs=None, desiredP
         if earlyCycles is not None and lateCycles is not None and len(earlyCycles) > 0 and len(lateCycles) > 0:
      
             # Amplitude Decay
-            earlyAmplitude = _robust_median(earlyCycles["amplitude"])
-            lateAmplitude = _robust_median(lateCycles["amplitude"])
+            earlyAmplitude = _robust_mean(earlyCycles["amplitude"])
+            lateAmplitude = _robust_mean(lateCycles["amplitude"])
             if np.mean(lateAmplitude) != 0:
                 amplitudeDecay = earlyAmplitude / lateAmplitude
             else:
                 amplitudeDecay = np.nan
 
             # Velocity Decay
-            earlySpeed = _robust_median(earlyCycles["speed"])
-            lateSpeed = _robust_median(lateCycles["speed"])
+            earlySpeed = _robust_mean(earlyCycles["speed"])
+            lateSpeed = _robust_mean(lateCycles["speed"])
             if np.mean(lateSpeed) != 0:
                 velocityDecay = earlySpeed / lateSpeed
             else:
                 velocityDecay = np.nan
 
             #time decay 
-            earlyCycleDuration = _robust_median(earlyCycles["duration"])
-            lateCycleDuration = _robust_median(lateCycles["duration"])
+            earlyCycleDuration = _robust_mean(earlyCycles["totalDuration"])
+            lateCycleDuration = _robust_mean(lateCycles["totalDuration"])
             if np.mean(lateCycleDuration) != 0:
                 timeDecay = earlyCycleDuration / lateCycleDuration
             else:
@@ -496,7 +521,7 @@ def get_outputUpdated(distance, velocity = None, peaks = None, fs=None, desiredP
     feats["CVMaxOpeningSpeed"] = _cv(cycles["openingSpeedMax"])
     feats["NumberHesitations"] = int(cycles["hesitations"].sum())
     if len(cycleDuration) >= 2:
-        feats["NumberPauses"] = int(((cycles["duration"] > 2 * feats["MedianCycleDuration"]).sum()) if np.isfinite(feats["MedianCycleDuration"]) else 0)
+        feats["NumberPauses"] = int(((cycles["duration"] > 2 * feats["MeanCycleDuration"]).sum()) if np.isfinite(feats["MeanCycleDuration"]) else 0)
     else:
         feats["NumberPauses"] = 0
 
@@ -854,7 +879,17 @@ def main():
 
                         actualScalingMethod = 'NOSCALING'
                     else:
-                        scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod)
+                        scalingFactor = 1.0
+                        actualScalingMethod = 'NOSCALING'
+                        if 'normalization_factor' in data:
+                            #update the scaling factor using the provided normalization factor in the JSON file.
+                            normalization_factor = data['normalization_factor']
+                            scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod, normalization_factor)
+
+                        else: 
+                            #we need to re-estimate the normalizaton factor directly from the landmarks. Will recompute the raw signal using the landmarks and use the signal from the JSON file to estimate the scaling factor. This is not ideal, but it is a fallback in case the normalization factor is not provided in the JSON file.
+                            scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod, normalization_factor=None, rawSignalOriginal = linePlotData)
+                        
                         # Scale signal and recompute parameters
                         # outParameters, distance, velocity = get_outputUpdated(up_sample_signal * scalingFactor)
                         if estimatePeaks == True:
@@ -871,7 +906,19 @@ def main():
                         pd.DataFrame.from_dict(data=outParameters, orient='index').to_csv(cvsFilename, header=False)
                         if plotResults:
                             plt.figure(figsize=(10, 6))
-                            plt.plot(np.arange(len(distance)) / 60, np.array(distance))
+                            time_vector = np.arange(len(distance)) / 60  # Assuming distance is sampled at 60 Hz
+                            plt.plot(time_vector, np.array(distance))
+
+                            for peak in peaks:
+
+                                # plt.plot(time_vector[peak['openingPeakIndex']], distance[peak['openingPeakIndex']], 'bo', alpha=0.5)
+                                # plt.plot(time_vector[peak['closingPeakIndex']], distance[peak['closingPeakIndex']], 'co', alpha=0.5)
+                                # plt.plot(time_vector[peak['openingMaxSpeedIndex']], distance[peak['openingMaxSpeedIndex']], 'mo', alpha=0.5)
+                                # plt.plot(time_vector[peak['closingMaxSpeedIndex']], distance[peak['closingMaxSpeedIndex']], 'yo', alpha=0.5)
+
+                                plt.plot(time_vector[peak['openingValleyIndex']], distance[peak['openingValleyIndex']], 'go')
+                                plt.plot(time_vector[peak['closingValleyIndex']], distance[peak['closingValleyIndex']], 'ro')
+                                plt.plot(time_vector[peak['peakIndex']], distance[peak['peakIndex']], 'ko')
                             plt.xlabel('Time (s)')
                             plt.ylabel('Distance')
                             plt.title('Distance Signal')
@@ -886,7 +933,7 @@ def main():
                     
                     if plotResults:
                             plt.figure(figsize=(10, 6))
-                            plt.plot(linePlotData, linePlotData)
+                            plt.plot(linePlotTime, linePlotData)
                             plt.xlabel('Time (s)')
                             plt.ylabel('Distance')
                             plt.title('Distance Signal')
