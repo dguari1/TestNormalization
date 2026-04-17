@@ -706,8 +706,6 @@ def get_output(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 
 
     #Compute the average frequency as the number of peaks divided by the time between the first and last peak
     frequency = len(peaks) / ((peaks[-1]['closingValleyIndex'] - peaks[0]['openingValleyIndex']) * (1 / fs))
-    print(f"Computed frequency: {frequency} Hz based on {len(peaks)} peaks and time duration of {(peaks[-1]['closingValleyIndex'] - peaks[0]['openingValleyIndex']) * (1 / fs)} seconds.")
-    print(peaks)
 
     # Initialize decay variables
     rateDecay = np.nan
