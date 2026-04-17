@@ -36,7 +36,7 @@ PINKY_PIP = 18
 PINKY_DIP = 19
 PINKY_TIP = 20
 
-def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end,fs=60, cutOffFrequency=10): 
+def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end,fs: float = 60, cutOffFrequency: float = 10): 
 
     b, a = signal.butter(2, cutOffFrequency, fs=fs, btype='low', analog=False)
     distance = signal.filtfilt(b, a, distance)  
@@ -50,9 +50,9 @@ def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end
         ve = ve - start_time
         p = p - start_time
         #find the index of the peak and valleys
-        openingValleyIndex = np.argmin(np.abs(time - vs))-1
+        openingValleyIndex = np.argmin(np.abs(time - vs))
         openingValleyIndex = openingValleyIndex if openingValleyIndex >= 0 else 0
-        closingValleyIndex = np.argmin(np.abs(time - ve))+1
+        closingValleyIndex = np.argmin(np.abs(time - ve))
         closingValleyIndex = closingValleyIndex if closingValleyIndex<=len(distance) else len(distance)
         peakIndex = np.argmin(np.abs(time - p))
 
@@ -79,10 +79,12 @@ def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end
                 idxPeak += 1
         openingPeakIndex = idxPeak
 
+
+        openingValleyIndexOriginal = openingValleyIndex
         #update the valley 
         idxValley = openingMaxSpeedIndex - 1
         if idxValley >= 0:
-            while deriv[idxValley] != 0:
+            while (deriv[idxValley] != 0) or (idxValley > openingValleyIndexOriginal):
                 if idxValley <= 0:
                     idxValley = np.nan
                     break
@@ -113,11 +115,12 @@ def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end
                 idxPeak -= 1
         closingPeakIndex = idxPeak
 
+        closingValleyIndexOriginal = closingValleyIndex
         #update the valley of the closing sequence
         idxValley = closingMaxSpeedIndex + 1
         if idxValley < len(deriv):
             # Move right until you find where the velocity is zero (end of negative segment)
-            while deriv[idxValley] != 0:
+            while (deriv[idxValley] != 0) or (idxValley < closingValleyIndexOriginal):
                 if idxValley >= len(deriv) - 1:
                     # If you reach the end of the signal, set idxValley to NaN and break
                     idxValley = np.nan
@@ -138,6 +141,12 @@ def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end
         
         if not (np.isnan(openingPeakIndex) or np.isnan(closingPeakIndex) or np.isnan(openingValleyIndex) or np.isnan(closingValleyIndex) or np.isnan(openingMaxSpeedIndex) or np.isnan(closingMaxSpeedIndex) or np.isnan(peakIndex)):
             informationPeaks.append(peakInfo)
+
+
+    #we need to do a first pass and ensure the peaks are in order
+    informationPeaks = sorted(informationPeaks, key=lambda k: k['openingValleyIndex'])
+    #we only keep peaks where the closing valley is after the opening valley and the peak is between the opening and closing valley
+    informationPeaks = [peak for peak in informationPeaks if peak['closingValleyIndex'] > peak['openingValleyIndex'] and peak['peakIndex'] > peak['openingValleyIndex'] and peak['peakIndex'] < peak['closingValleyIndex']]
 
     return distance, velocity, informationPeaks
 
@@ -916,7 +925,10 @@ def main():
                             time_vector = np.arange(len(distance)) / 60  # Assuming distance is sampled at 60 Hz
                             plt.plot(time_vector, np.array(distance))
 
-                            for peak in peaks:
+                            for idx, peak in enumerate(peaks):
+                                
+                                if desiredPeaks != 'all' and idx > int(desiredPeaks):
+                                    break
 
                                 # plt.plot(time_vector[peak['openingPeakIndex']], distance[peak['openingPeakIndex']], 'bo', alpha=0.5)
                                 # plt.plot(time_vector[peak['closingPeakIndex']], distance[peak['closingPeakIndex']], 'co', alpha=0.5)
