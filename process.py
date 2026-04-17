@@ -535,6 +535,13 @@ def get_output(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 
             distance, fs=fs, minDistance=3, cutOffFrequency=7.5, prct=0.05
         )
 
+
+    #we need to do a first pass and ensure the peaks are in order
+    peaks = sorted(peaks, key=lambda k: k['openingValleyIndex'])
+    #we only keep peaks where the closing valley is after the opening valley and the peak is between the opening and closing valley
+    peaks = [peak for peak in peaks if peak['closingValleyIndex'] > peak['openingValleyIndex'] and peak['peakIndex'] > peak['openingValleyIndex'] and peak['peakIndex'] < peak['closingValleyIndex']]
+
+
     amplitude = []
     peakTime = []
     rmsVelocity = []
@@ -699,6 +706,8 @@ def get_output(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 
 
     #Compute the average frequency as the number of peaks divided by the time between the first and last peak
     frequency = len(peaks) / ((peaks[-1]['closingValleyIndex'] - peaks[0]['openingValleyIndex']) * (1 / fs))
+    print(f"Computed frequency: {frequency} Hz based on {len(peaks)} peaks and time duration of {(peaks[-1]['closingValleyIndex'] - peaks[0]['openingValleyIndex']) * (1 / fs)} seconds.")
+    print(peaks)
 
     # Initialize decay variables
     rateDecay = np.nan
