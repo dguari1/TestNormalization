@@ -534,7 +534,7 @@ def get_outputUpdated(distance, velocity = None, peaks = None, fs=None, desiredP
     else:
         feats["NumberPauses"] = 0
 
-    return feats, distance, velocity
+    return feats, distance, velocity, peaks
 
 def get_output(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 'all'):
 
@@ -805,7 +805,7 @@ def get_output(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 
         "NumberofPauses": numPauses,
         "numberofHesitations": hesitations,
     }
-    return jsonFinal, distance, velocity
+    return jsonFinal, distance, velocity, peaks
 
 def get_fileName(file, outputFolder, scalingMethod):
     baseName = os.path.splitext(file)[0]
@@ -888,10 +888,10 @@ def main():
                     if scalingMethod == 'NOSCALING':
                         # outParameters, distance, velocity = get_outputUpdated(up_sample_signal)
                         if estimatePeaks == True:
-                            outParameters, distance, velocity = estimator(up_sample_signal, desiredPeaks = desiredPeaks)
+                            outParameters, distance, velocity, peaks = estimator(up_sample_signal, desiredPeaks = desiredPeaks)
                         else:
                             distance, velocity, peaks = ProcessCustomPeaks(up_sample_signal,time_vector, start_time, data['peaks'], data['valleys_start'], data['valleys_end'], fs=60, cutOffFrequency=7.5)
-                            outParameters, distance, velocity = estimator(distance, velocity, peaks, fs=60, desiredPeaks = desiredPeaks)
+                            outParameters, distance, velocity, peaks = estimator(distance, velocity, peaks, fs=60, desiredPeaks = desiredPeaks)
 
                         actualScalingMethod = 'NOSCALING'
                     else:
@@ -909,10 +909,10 @@ def main():
                         # Scale signal and recompute parameters
                         # outParameters, distance, velocity = get_outputUpdated(up_sample_signal * scalingFactor)
                         if estimatePeaks == True:
-                            outParameters, distance, velocity = estimator(up_sample_signal * scalingFactor, desiredPeaks = desiredPeaks)
+                            outParameters, distance, velocity, peaks = estimator(up_sample_signal * scalingFactor, desiredPeaks = desiredPeaks)
                         else:
                             distance, velocity, peaks = ProcessCustomPeaks(up_sample_signal * scalingFactor,time_vector, start_time, data['peaks'], data['valleys_start'], data['valleys_end'], fs=60, cutOffFrequency=7.5)
-                            outParameters, distance, velocity = estimator(distance , velocity, peaks, fs=60, desiredPeaks = desiredPeaks)
+                            outParameters, distance, velocity, peaks = estimator(distance , velocity, peaks, fs=60, desiredPeaks = desiredPeaks)
 
 
        
