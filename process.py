@@ -53,8 +53,9 @@ def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end
         openingValleyIndex = np.argmin(np.abs(time - vs))
         openingValleyIndex = openingValleyIndex if openingValleyIndex >= 0 else 0
         closingValleyIndex = np.argmin(np.abs(time - ve))
-        closingValleyIndex = closingValleyIndex if closingValleyIndex<=len(distance) else len(distance)
+        closingValleyIndex = closingValleyIndex if closingValleyIndex < len(distance) else len(distance)-1
         peakIndex = np.argmin(np.abs(time - p))
+
 
 
         #find the opening peak index by moving right from the opening valley until you find where the velocity is zero (end of positive segment)
@@ -91,6 +92,8 @@ def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end
 
                 idxValley -= 1
         openingValleyIndex = idxValley
+        #make sure is not out of bounds
+        openingValleyIndex  = openingValleyIndex  if openingValleyIndex  >= 0 else 0
 
         #find the closing peak index by moving left from the closing valley until you find where the velocity is zero (end of negative segment)
         deriv = velocity.copy()
@@ -127,6 +130,10 @@ def ProcessCustomPeaks(distance,time, start_time,peaks,valleys_start,valleys_end
                     break
                 idxValley += 1
         closingValleyIndex = idxValley
+        #make sure is not out of bounds
+        closingValleyIndex = closingValleyIndex if closingValleyIndex < len(distance) else len(distance)-1
+
+
 
         #put all this information together in a dictionary
         peakInfo = {
@@ -157,7 +164,7 @@ def decayEstimation(Peaks, nSelectedPeaks=4):
     else:
         return 0
 
-def scaling(landmarks, scale='THUMBSIZE', normalization_factor = None, rawSignalOriginal = None):
+def scaling(landmarks, scale='THUMBSIZE', normalization_factor = None, rawSignalOriginal = None, task = 'FT'):
     prevScale = []
     newScale = []
     rawSignalEstimated = []
@@ -179,8 +186,19 @@ def scaling(landmarks, scale='THUMBSIZE', normalization_factor = None, rawSignal
 
                 if normalization_factor is None:
                     #we were not provided a normalization factor, so we will use recompute the distance in pixels and use the output of VisionMD to get an idea of the normalization factor used originally. 
-                    dist = math.dist(landmark[INDEX_FINGER_TIP], landmark[THUMB_TIP])
-                    rawSignalEstimated.append(dist)
+                    
+                    #this depends on the tasks, for now, we have FT (finger tap) and HM (hand movement)
+                    if task == 'FT':
+                        dist = math.dist(landmark[INDEX_FINGER_TIP], landmark[THUMB_TIP])
+                        rawSignalEstimated.append(dist)
+                    elif task == 'HM':
+                        dist1 = math.dist(landmark[INDEX_FINGER_MCP], landmark[WRIST])
+                        dist2 = math.dist(landmark[MIDDLE_FINGER_MCP], landmark[WRIST])
+                        dist3 = math.dist(landmark[RING_FINGER_MCP], landmark[WRIST])
+                        #compute the size of the palm
+                        palm_size = (dist1 + dist2 + dist3  )/3
+                        rawSignalEstimated.append(palm_size)   
+
 
                 #if new scaling mehthod is selected, compute the new scaling method
                 if scale == 'THUMBSIZE':
@@ -235,7 +253,7 @@ def scaling(landmarks, scale='THUMBSIZE', normalization_factor = None, rawSignal
                             dist3 = math.dist(landmark[RING_FINGER_MCP], landmark[WRIST])
                             dist4 = math.dist(landmark[PINKY_MCP], landmark[WRIST])
                             #compute the size of the palm
-                            palm_size = (dist1 + dist2 + dist3 +dist4 )/4
+                            palm_size = (dist1 + dist2 + dist3  )/3
                             newScale.append(palm_size)
                         except Exception as e:
                             print(f"Error computing palm size for frame {idx}: {e}")
@@ -263,15 +281,16 @@ def scaling(landmarks, scale='THUMBSIZE', normalization_factor = None, rawSignal
         # Divide the new scaling method by the original scaling method
         # to get the scaling factor
         if normalization_factor is not None:
-            scalingFactor = normalization_factor / np.max(median_filter(newScale, 3))
+            scalingFactor = normalization_factor / np.percentile(median_filter(newScale, 3), 97.5)
+
         else:
             if rawSignalOriginal is not None and len(rawSignalEstimated)>0:
                 estimatedPrevScale = np.mean(rawSignalEstimated) / np.mean(rawSignalOriginal)
-                scalingFactor = estimatedPrevScale / np.max(median_filter(newScale, 3))
+                scalingFactor = estimatedPrevScale / np.percentile(median_filter(newScale, 3), 97.5)
             else:
                 scalingFactor = 1
                 scale = 'NOSCALING'
-        
+                  
         return scalingFactor, scale  # Return scaling factor and scaling method
 
 def _theil_sen_slope(x, y):
@@ -325,8 +344,9 @@ def compute_measures_per_cycle(peaks, distance, velocity, fs):
     """
     x = np.asarray(distance, dtype=float)
     v = np.asarray(velocity, dtype=float)
-    maxVelocity = v.max()
-    velocityThreshold = maxVelocity * 0.5
+    maxVelocity = v.max()# np.max(v[peaks[0]['openingValleyIndex']:peaks[-1]['closingValleyIndex']]) if len(peaks) > 0 else np.max(v)
+
+    velocityThreshold = maxVelocity * 0.25
 
     rows = []
 
@@ -398,7 +418,7 @@ def compute_measures_per_cycle(peaks, distance, velocity, fs):
                 # Count the number of times the absolute value of velocity crosses the threshold defined by maxVelocity*velocityThreshold
                 crossingsDuringPause = np.sum((abs_velocity_segment[:-1] < velocityThreshold) & (abs_velocity_segment[1:] >= velocityThreshold)) + \
                             np.sum((abs_velocity_segment[:-1] >= velocityThreshold) & (abs_velocity_segment[1:] < velocityThreshold))
-                
+
         if crossingsDuringOpeningClosingMovement > 4 or  crossingsDuringPause > 4:
             hesitations = 1
         else:
@@ -424,7 +444,7 @@ def compute_measures_per_cycle(peaks, distance, velocity, fs):
 
     return pd.DataFrame(rows)
 
-def get_outputUpdated(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 'all'):
+def get_outputUpdated(distance, velocity = None, peaks = None, fs=60, desiredPeaks = 'all'):
    
     if peaks is None or velocity is None:
         fs = 60 if fs is None else fs
@@ -519,7 +539,35 @@ def get_outputUpdated(distance, velocity = None, peaks = None, fs=None, desiredP
 
     feats["AmplitudeDecay"] = abs(1-amplitudeDecay)   
     feats["SpeedDecay"] = abs(1-velocityDecay) 
-    feats["CycleDurationDecay"] = abs(1-timeDecay)     
+    feats["CycleDurationDecay"] = abs(1-timeDecay)   
+
+
+    #idx = cycles["t_p"].dropna().values.astype(float) 
+    #idx = idx - idx[0]  # Normalize time to start from zero
+    #update to the way we measure decay, it will be measures using the slope divided by the mean of the value across the cycles, this will give us a better idea of the decay across the cycles, and it will be more robust to outliers.
+    values = cycles['amplitude'].dropna().values.astype(float)
+    idx = np.arange(len(values), dtype=float)  # Use the index of the cycles as x-values
+    if len(idx)>= 5:
+        ts = _theil_sen_slope(idx, values)
+        feats["AmplitudeDecay"] = -ts / _robust_median(cycles["amplitude"])  
+    else:
+        feats["AmplitudeDecay"] = np.nan
+
+    values = cycles['speed'].dropna().values.astype(float)
+    idx = np.arange(len(values), dtype=float)  # Use the index of the cycles as x-values
+    if len(idx)>= 5:
+        ts = _theil_sen_slope(idx, values)
+        feats["SpeedDecay"] = -ts / _robust_median(cycles["speed"])  
+    else:
+        feats["SpeedDecay"] = np.nan
+
+    if len(idx) >= 5:
+        values = cycles['totalDuration'].dropna().values.astype(float)
+        idx = np.arange(len(values), dtype=float)  # Use the index of the cycles as x-values
+        ts = _theil_sen_slope(idx, values)
+        feats["CycleDurationDecay"] = -ts / _robust_median(cycles["totalDuration"])  
+    else:
+        feats["CycleDurationDecay"] = np.nan
 
     # --- Irregularity / hesitations / halts  ---
     feats["CVAmplitude"] = _cv(cycles["amplitude"])#_robust_std(cycles["amplitude"]) 
@@ -536,7 +584,7 @@ def get_outputUpdated(distance, velocity = None, peaks = None, fs=None, desiredP
 
     return feats, distance, velocity, peaks
 
-def get_output(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 'all'):
+def get_output(distance, velocity = None, peaks = None, fs=60, desiredPeaks = 'all'):
 
     if peaks is None or velocity is None:
         fs = 60 if fs is None else fs
@@ -577,7 +625,7 @@ def get_output(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 
             print(f"desiredPeaks should be 'all' or an string representing an integer")
 
 
-    maxVelocity = np.max(velocity)
+    maxVelocity = np.max(velocity[peaks[0]['openingValleyIndex']:peaks[-1]['closingValleyIndex']]) if len(peaks) > 0 else np.max(velocity)
     for idx, peak in enumerate(peaks):
 
         #for some reason, the peakFinder function does not return the opening and closing Peak Index
@@ -644,6 +692,7 @@ def get_output(distance, velocity = None, peaks = None, fs=None, desiredPeaks = 
         crossings = np.sum((abs_velocity_segment[:-1] < maxVelocity*0.25) & (abs_velocity_segment[1:] >= maxVelocity*0.25)) + \
                     np.sum((abs_velocity_segment[:-1] >= maxVelocity*0.25) & (abs_velocity_segment[1:] < maxVelocity*0.25))
         
+        print(f"Cycle {idx+1}: Crossings during movement = {crossings}")
         # If the number of crossings is greater than 4, a hesitation occurred
         if crossings > 4:
             hesitationsinMovement.append(1)
@@ -825,7 +874,9 @@ def main():
     parser.add_argument("--estimatePeaks", type=bool, required=False, default=False, choices=[True,False], help="Estimate peaks if not provided in the JSON file.")
     parser.add_argument("--desiredPeaks", type=str, required=False, default="all",  help="Number of peaks to use during estimation")
     parser.add_argument("--plotResults", type=bool, required=False, default=True, choices=[True,False],  help="Plot resulting signal")
+    parser.add_argument("--saveSignals", type=bool, required=False, default=False, choices=[True,False],  help="Save the processed signal in a csv data file")
     parser.add_argument("--featuresEstimator", type=str, required=False, default="default", choices=["default", "new"], help="Feature estimator to use")
+    parser.add_argument("--task", type=str, required=False, default="FT", choices=["FT", "HM"], help="Task to process")
     args = parser.parse_args()
 
     inputFolder = args.inputFolder
@@ -834,7 +885,9 @@ def main():
     estimatePeaks = args.estimatePeaks
     desiredPeaks = args.desiredPeaks
     plotResults = args.plotResults
+    saveSignals = args.saveSignals
     featuresEstimator = args.featuresEstimator
+    task = args.task
     if featuresEstimator == 'default':
         estimator = get_output
     else:
@@ -904,7 +957,7 @@ def main():
 
                         else: 
                             #we need to re-estimate the normalizaton factor directly from the landmarks. Will recompute the raw signal using the landmarks and use the signal from the JSON file to estimate the scaling factor. This is not ideal, but it is a fallback in case the normalization factor is not provided in the JSON file.
-                            scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod, normalization_factor=None, rawSignalOriginal = linePlotData)
+                            scalingFactor, actualScalingMethod = scaling(landMarks, scalingMethod, normalization_factor=None, rawSignalOriginal = linePlotData, task = task)
                         
                         # Scale signal and recompute parameters
                         # outParameters, distance, velocity = get_outputUpdated(up_sample_signal * scalingFactor)
@@ -920,9 +973,20 @@ def main():
                         # Save to CSV
                         cvsFilename = get_fileName(file, outputFolder, actualScalingMethod)
                         pd.DataFrame.from_dict(data=outParameters, orient='index').to_csv(cvsFilename, header=False)
+                        time_vector = np.arange(len(distance)) / 60  # Assuming distance is sampled at 60 Hz
+                        if saveSignals:
+                            # Save the processed signal to a CSV file
+                            signalFilename = cvsFilename.replace('.csv', '_signals.csv')
+                            signalData = pd.DataFrame({
+                                'time': time_vector,
+                                'distance': distance,
+                                'velocity': velocity
+                            })
+                            signalData.to_csv(signalFilename, index=False)
+
                         if plotResults:
                             plt.figure(figsize=(10, 6))
-                            time_vector = np.arange(len(distance)) / 60  # Assuming distance is sampled at 60 Hz
+                            
                             plt.plot(time_vector, np.array(distance))
 
                             for idx, peak in enumerate(peaks):
@@ -950,19 +1014,19 @@ def main():
                 except Exception as e:
                     print(f"Error processing file {file}: {e}")
                     
-                    if plotResults:
-                            plt.figure(figsize=(10, 6))
-                            plt.plot(linePlotTime, linePlotData)
-                            plt.xlabel('Time (s)')
-                            plt.ylabel('Distance')
-                            plt.title('Distance Signal')
-                            plt.grid(True)
-                            ax = plt.gca()
-                            ax.set_facecolor((1.0, 0.47, 0.42,0.25))
-                            actualScalingMethod = scalingMethod
-                            cvsFilename = get_fileName(file, outputFolder, actualScalingMethod)
-                            plt.savefig(cvsFilename.replace('.csv', '.png'))
-                            plt.close()
+                    # if plotResults:
+                    #         plt.figure(figsize=(10, 6))
+                    #         plt.plot(linePlotTime, linePlotData)
+                    #         plt.xlabel('Time (s)')
+                    #         plt.ylabel('Distance')
+                    #         plt.title('Distance Signal')
+                    #         plt.grid(True)
+                    #         ax = plt.gca()
+                    #         ax.set_facecolor((1.0, 0.47, 0.42,0.25))
+                    #         actualScalingMethod = scalingMethod
+                    #         cvsFilename = get_fileName(file, outputFolder, actualScalingMethod)
+                    #         plt.savefig(cvsFilename.replace('.csv', '.png'))
+                    #         plt.close()
                     continue
 
                 

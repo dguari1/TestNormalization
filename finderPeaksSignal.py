@@ -860,7 +860,7 @@ def correctBasedonHeightandVelocityNegativePeaks(pos,distance,velocity, minDista
 
     return corrected
 
-def correctBasedonDistanceBetweenPeaks(peaks, distance, velocity, threshold=1.96, fs=60):
+def correctBasedonDistanceBetweenPeaks(peaks, distance, velocity, threshold=1.96, fs=60.0):
     """
     Corrects peaks based on the distance between consecutive peaks.
 
