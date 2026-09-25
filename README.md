@@ -23,4 +23,16 @@ There are three options:
 - `INDEXSIZE` will use the size of the INDEX finger (estimated from the provided landmarks) as the normalization factor 
 - `THUMBSIZE` will use the size of the THUMB finger (estimated from the provided landmarks) as the normalization factor 
 - `HANDSPAN` will use the size of the hand span (distance from the wrist to the tip of the index finger, estimated from the provided landmarks) as the normalization factor 
-- `PALMSIZE` will use the size of the palm (estimated from the provided landmarks) as the normalization factor 
+- `PALMSIZE` will use the size of the palm (estimated from the provided landmarks) as the normalization factor
+
+## Technical quality checks
+
+Each output CSV includes a `quality_check` row (`Good`, `Needs review`, or
+`Failed`) plus auditable `quality_*` metrics and reasons. The checks are the
+signal-based VisionMD technical-quality screen: sample count, invalid values,
+flat signals, and isolated jumps. They flag technical concerns only and do not
+establish clinical validity. The generated plot shows the same quality label,
+reasons, and a green/amber/red background.
+
+Archived JSON files do not include live P/S pipeline diagnostics, so the
+P/S-specific VisionMD quality checks cannot be recreated in this batch tool.

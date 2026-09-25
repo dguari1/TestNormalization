@@ -860,7 +860,14 @@ def correctBasedonHeightandVelocityNegativePeaks(pos,distance,velocity, minDista
 
     return corrected
 
-def correctBasedonDistanceBetweenPeaks(peaks, distance, velocity, threshold=1.96, fs=60.0):
+def correctBasedonDistanceBetweenPeaks(
+        peaks,
+        distance,
+        velocity,
+        threshold=1.96,
+        fs=60.0,
+        meaningful_valley_fraction=0.20,
+):
     """
     Corrects peaks based on the distance between consecutive peaks.
 
@@ -869,6 +876,13 @@ def correctBasedonDistanceBetweenPeaks(peaks, distance, velocity, threshold=1.96
     mean  - threshold * standard deviation / sqrt(len(peaks))
     and merge them. 
     Peaks that are further apart than the threshold are retained in the output list.
+
+    A short interval alone is not enough evidence to merge two cycles. Before
+    merging a close pair, the function checks for a meaningful intervening
+    valley. If the valley depth is at least ``meaningful_valley_fraction`` of
+    the smaller neighbouring cycle amplitude, the pair is retained as two
+    completed cycles. This protects genuine fast or diminishing repetitions
+    from being merged as duplicate detections.
 
     Parameters:
     -----------
@@ -1202,7 +1216,30 @@ def correctBasedonDistanceBetweenPeaks(peaks, distance, velocity, threshold=1.96
         merged_peaks.sort(key=lambda d: d['peakIndex'])
 
         return merged_peaks
-    
+
+    def has_meaningful_intervening_valley(left_peak, right_peak):
+        """Return whether a close pair is separated by a completed movement."""
+        left_index = left_peak['peakIndex']
+        right_index = right_peak['peakIndex']
+        if right_index <= left_index:
+            return False
+
+        intervening_valley = np.min(distance[left_index:right_index + 1])
+        valley_depth = min(
+            distance[left_index] - intervening_valley,
+            distance[right_index] - intervening_valley,
+        )
+        left_amplitude = distance[left_index] - min(
+            distance[left_peak['openingValleyIndex']],
+            distance[left_peak['closingValleyIndex']],
+        )
+        right_amplitude = distance[right_index] - min(
+            distance[right_peak['openingValleyIndex']],
+            distance[right_peak['closingValleyIndex']],
+        )
+        local_amplitude = min(left_amplitude, right_amplitude)
+        return (local_amplitude > np.finfo(float).eps and
+                valley_depth >= meaningful_valley_fraction * local_amplitude)
 
     peaktimesdifferences =[]
     for i in range(len(peaks)-1):
@@ -1220,8 +1257,9 @@ def correctBasedonDistanceBetweenPeaks(peaks, distance, velocity, threshold=1.96
         current_group = []
 
         for i in range(len(peaktimesdifferences)):
-            if peaktimesdifferences[i] < lowPeakTime:
-                # these two peaks belong to same merge group
+            if (peaktimesdifferences[i] < lowPeakTime and
+                    not has_meaningful_intervening_valley(peaks[i], peaks[i + 1])):
+                # Merge only duplicate detections, not two completed cycles.
                 if not current_group:
                     current_group = [i, i+1]
                 else:

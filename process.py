@@ -1,6 +1,5 @@
 import os
 import json
-from turtle import speed
 import numpy as np
 import math
 import scipy.interpolate as interpolate
@@ -12,6 +11,75 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from finderPeaksSignal import peakFinder
 import argparse
+
+
+QUALITY_VERSION = "visionmd-quality-v1"
+
+
+def assess_signal_quality(signal_values):
+    """Run VisionMD's task-agnostic technical signal-quality screen.
+
+    This ports VisionMD's signal checks. Archived JSON exports do not contain
+    the live P/S pipeline diagnostics, so P/S-specific checks are unavailable.
+    """
+    signal_values = np.asarray(signal_values, dtype=float).reshape(-1)
+    metrics = {"sample_count": int(signal_values.size)}
+    reasons = []
+    if signal_values.size < 3:
+        return {"version": QUALITY_VERSION, "status": "failed", "label": "Failed",
+                "reasons": ["No usable angle signal"], "metrics": metrics}
+
+    finite = np.isfinite(signal_values)
+    invalid_fraction = float(1.0 - finite.mean())
+    metrics["invalid_fraction"] = invalid_fraction
+    if invalid_fraction > 0.10:
+        reasons.append("More than 10% of signal samples are invalid")
+    valid = signal_values[finite]
+    if valid.size < 3:
+        return {"version": QUALITY_VERSION, "status": "failed", "label": "Failed",
+                "reasons": reasons or ["Too few valid samples"], "metrics": metrics}
+
+    robust_range = float(np.percentile(valid, 95) - np.percentile(valid, 5))
+    metrics["robust_range"] = robust_range
+    if not math.isfinite(robust_range) or robust_range <= 1e-8:
+        return {"version": QUALITY_VERSION, "status": "failed", "label": "Failed",
+                "reasons": reasons + ["Signal is flat"], "metrics": metrics}
+
+    contiguous = np.interp(np.arange(signal_values.size), np.flatnonzero(finite), valid)
+    steps = np.abs(np.diff(contiguous))
+    median_step = float(np.median(steps)) if steps.size else 0.0
+    p99_step = float(np.percentile(steps, 99)) if steps.size else 0.0
+    jump_ratio = p99_step / max(median_step, 1e-6)
+    metrics.update(median_step=median_step, p99_step=p99_step, jump_ratio=jump_ratio)
+    if invalid_fraction > 0:
+        reasons.append("Signal contains interpolated invalid samples")
+    if p99_step > 0.35 * robust_range and jump_ratio > 15:
+        reasons.append("Signal contains an unusually isolated jump")
+
+    status = "review" if reasons else "good"
+    return {"version": QUALITY_VERSION, "status": status,
+            "label": "Needs review" if status == "review" else "Good",
+            "reasons": reasons, "metrics": metrics,
+            "disclaimer": "Automated technical quality screen; not a clinical validity assessment."}
+
+
+def add_quality_fields(features, distance):
+    """Add flat, CSV-friendly VisionMD quality fields to a feature dictionary."""
+    quality = assess_signal_quality(distance)
+    metrics = quality["metrics"]
+    features.update({
+        "quality_check": quality["label"],
+        "quality_status": quality["status"],
+        "quality_reasons": "; ".join(quality["reasons"]),
+        "quality_version": quality["version"],
+        "quality_sample_count": metrics.get("sample_count"),
+        "quality_invalid_fraction": metrics.get("invalid_fraction", np.nan),
+        "quality_robust_range": metrics.get("robust_range", np.nan),
+        "quality_median_step": metrics.get("median_step", np.nan),
+        "quality_p99_step": metrics.get("p99_step", np.nan),
+        "quality_jump_ratio": metrics.get("jump_ratio", np.nan),
+    })
+    return quality
 
 # Define landmarks
 WRIST = 0
@@ -582,6 +650,7 @@ def get_outputUpdated(distance, velocity = None, peaks = None, fs=60, desiredPea
     else:
         feats["NumberPauses"] = 0
 
+    add_quality_fields(feats, distance)
     return feats, distance, velocity, peaks
 
 def get_output(distance, velocity = None, peaks = None, fs=60, desiredPeaks = 'all'):
@@ -854,6 +923,7 @@ def get_output(distance, velocity = None, peaks = None, fs=60, desiredPeaks = 'a
         "NumberofPauses": numPauses,
         "numberofHesitations": hesitations,
     }
+    add_quality_fields(jsonFinal, distance)
     return jsonFinal, distance, velocity, peaks
 
 def get_fileName(file, outputFolder, scalingMethod):
@@ -1002,9 +1072,18 @@ def main():
                                 plt.plot(time_vector[peak['openingValleyIndex']], distance[peak['openingValleyIndex']], 'go')
                                 plt.plot(time_vector[peak['closingValleyIndex']], distance[peak['closingValleyIndex']], 'ro')
                                 plt.plot(time_vector[peak['peakIndex']], distance[peak['peakIndex']], 'ko')
+                            quality_label = outParameters.get('quality_check', 'Not assessed')
+                            quality_reasons = outParameters.get('quality_reasons', '')
+                            quality_status = outParameters.get('quality_status', '')
+                            title = f'Distance Signal — Quality: {quality_label}'
+                            if quality_reasons:
+                                title += f'\n{quality_reasons}'
                             plt.xlabel('Time (s)')
                             plt.ylabel('Distance')
-                            plt.title('Distance Signal')
+                            plt.title(title)
+                            plt.gca().set_facecolor({
+                                'good': '#eaf6ea', 'review': '#fff6db', 'failed': '#fde8e8'
+                            }.get(quality_status, 'white'))
                             plt.grid(True)
                             plt.savefig(cvsFilename.replace('.csv', '.png'))
                             plt.close()
